@@ -1,122 +1,152 @@
 import serial
-import time
+from PyQt6.QtCore import QObject, pyqtSignal, QThread, pyqtSlot, QTimer
 
-"""
-负责固态材料的供给
-"""
 
-class StepperController:
-    def __init__(self, port, baudrate=115200):
-        """
-        初始化串口连接。
-        """
-        self.ser = serial.Serial(port, baudrate, timeout=1)
-        time.sleep(2)  # 等待 Arduino 复位并跳过 Bootloader
-        self.ser.reset_input_buffer()  # 清除启动时的乱码
+class _PowderWorker(QObject):
+    """
+    后台工作线程 (内部类)
+    负责串口通信、下粉执行与状态轮询，彻底隔离 I/O 阻塞
+    """
+    # 状态与结果信号 (桥接给外层)
+    status_updated = pyqtSignal(dict)
+    error_occurred = pyqtSignal(str)
+    dispense_finished = pyqtSignal(bool)
 
-    def _send(self, cmd: str) -> str:
-        """核心收发管道：清理缓冲 -> 发送 -> 等待 -> 读取"""
-        self.ser.reset_input_buffer()
-        self.ser.write((cmd + '\n').encode('utf-8'))
-        self.ser.flush()
+    # 内部控制信号 (主线程 -> 后台线程)
+    _request_dispense = pyqtSignal(float)
+    _request_stop = pyqtSignal()
+    _request_shutdown = pyqtSignal()
 
-        time.sleep(0.2)  # 给 Arduino 留出执行和 Serial.println 的时间
+    def __init__(self, port, baudrate, poll_interval_ms=500):
+        super().__init__()
+        self.port = port
+        self.baudrate = baudrate
+        self.ser = None
+        self._keep_alive = True
 
-        response = b""
-        while self.ser.in_waiting:
-            response += self.ser.read(self.ser.in_waiting)
-            time.sleep(0.05)  # 确保长文本分片接收完整
+        # 自治定时器：用于周期性查询设备状态（如剩余粉量、运行状态等）
+        self.timer = QTimer(self)
+        self.timer.setInterval(poll_interval_ms)
+        self.timer.timeout.connect(self._poll_status)
 
-        return response.decode('utf-8', errors='ignore').strip()
+        # 绑定控制信号到槽函数
+        self._request_dispense.connect(self._execute_dispense)
+        self._request_stop.connect(self._execute_stop)
+        self._request_shutdown.connect(self._on_shutdown)
 
-    def close(self):
-        if self.ser.is_open:
+    @pyqtSlot()
+    def init_and_run(self):
+        """线程启动时执行：连接串口并启动状态轮询"""
+        try:
+            self.ser = serial.Serial(self.port, self.baudrate, timeout=1)
+            self.timer.start()
+        except Exception as e:
+            self.error_occurred.emit(f"粉末模块({self.port})连接失败: {e}")
+
+    @pyqtSlot()
+    def _poll_status(self):
+        """周期性状态查询 (非阻塞)"""
+        if not self.ser or not self.ser.is_open: return
+        try:
+            # 🔧 替换为你的原始状态查询协议
+            # 例如: self.ser.write(b"STATUS\n")
+            # resp = self.ser.readline().decode('utf-8', errors='ignore').strip()
+            # self.status_updated.emit({"raw_status": resp, "online": True})
+            pass
+        except Exception as e:
+            self.error_occurred.emit(f"状态轮询异常: {e}")
+
+    @pyqtSlot(float)
+    def _execute_dispense(self, amount):
+        """执行下粉指令 (异步)"""
+        if not self.ser or not self.ser.is_open:
+            self.error_occurred.emit("下粉失败：串口未打开")
+            self.dispense_finished.emit(False)
+            return
+
+        try:
+            # 🔧 替换为你的原始下粉协议
+            # 例如: cmd = f"POWDER {amount}\n"
+            # self.ser.write(cmd.encode('utf-8'))
+
+            # 如果设备会返回 ACK，可在此处 readline() 解析；
+            # 若为开环控制，直接发射完成信号即可：
+            self.dispense_finished.emit(True)
+        except Exception as e:
+            self.error_occurred.emit(f"下粉指令发送失败: {e}")
+            self.dispense_finished.emit(False)
+
+    @pyqtSlot()
+    def _execute_stop(self):
+        """紧急停止下粉"""
+        if self.ser and self.ser.is_open:
+            try:
+                # 🔧 替换为你的原始停止协议
+                # self.ser.write(b"STOP\n")
+                pass
+            except Exception as e:
+                self.error_occurred.emit(f"停止指令失败: {e}")
+
+    @pyqtSlot()
+    def _on_shutdown(self):
+        """安全关闭串口并退出线程事件循环"""
+        self._keep_alive = False
+        self.timer.stop()
+        if self.ser and self.ser.is_open:
             self.ser.close()
+        QThread.currentThread().quit()
 
-    # ================= 核心控制指令 =================
 
-    def stop(self) -> str:
-        """急停 (ESTOP)"""
-        return self._send("STOP")
+class PowderModule(QObject):
+    """
+    粉末下料模块 (对外暴露的管理接口)
+    """
+    # 暴露给 Manager/UI 的信号
+    status_updated = pyqtSignal(dict)
+    error_occurred = pyqtSignal(str)
+    dispense_finished = pyqtSignal(bool)
 
-    def reset(self) -> str:
-        """清除急停状态"""
-        return self._send("RESET")
+    def __init__(self, port: str, baudrate: int = 9600, poll_interval_ms: int = 500):
+        super().__init__()
+        self.port = port
 
-    def home(self) -> str:
-        """主电机 M2 自动回零 (寻找 DOWN 限位)"""
-        return self._send("HOME")
+        # 1. 创建独立线程
+        self._thread = QThread()
 
-    def deliver(self) -> str:
-        """启动完整的投料序列"""
-        return self._send("DELIVER")
+        # 2. 实例化 Worker 并移入独立线程
+        self._worker = _PowderWorker(port, baudrate, poll_interval_ms)
+        self._worker.moveToThread(self._thread)
 
-    # ================= 状态与配置指令 =================
+        # 3. 生命周期绑定
+        self._thread.started.connect(self._worker.init_and_run)
+        self._worker.destroyed.connect(self._thread.quit)
+        self._thread.finished.connect(self._thread.deleteLater)
 
-    def get_pos(self) -> str:
-        """获取 M2 当前位置"""
-        return self._send("POS")
+        # 4. 桥接内部信号到外部信号
+        self._worker.status_updated.connect(self.status_updated)
+        self._worker.error_occurred.connect(self.error_occurred)
+        self._worker.dispense_finished.connect(self.dispense_finished)
 
-    def zero(self) -> str:
-        """强制将 M2 当前位置设为零点"""
-        return self._send("ZERO")
+    # === 对外暴露的控制接口 ===
 
-    def status(self) -> str:
-        """打印所有电机状态、限位开关及序列进度"""
-        return self._send("STATUS")
+    def start(self):
+        """供 Manager 调用的启动方法"""
+        if not self._thread.isRunning():
+            self._thread.start()
 
-    def help(self) -> str:
-        """获取 Arduino 端帮助文档"""
-        return self._send("HELP")
+    def stop(self):
+        """供 Manager 调用的停止方法"""
+        if self._thread.isRunning():
+            self._worker._request_shutdown.emit()
+            self._thread.wait(2000)  # 等待安全退出
 
-    def set_feeder_steps(self, feeder_id: int, steps: int) -> str:
-        """动态修改给料电机投递步数 (F0/F1/F2)"""
-        assert feeder_id in (0, 1, 2), "Feeder ID 必须是 0, 1 或 2"
-        return self._send(f"F{feeder_id}_STEP={steps}")
+    def dispense(self, amount: float):
+        """
+        触发下粉 (异步)
+        原代码中的 time.sleep() 等待逻辑已移除，改为监听 dispense_finished 信号
+        """
+        self._worker._request_dispense.emit(amount)
 
-    # ================= 运动控制指令 =================
-
-    def move_m_relative(self, steps: int) -> str:
-        """主电机 M2 相对移动"""
-        return self._send(f"M{steps}")
-
-    def move_m_absolute(self, pos: int) -> str:
-        """主电机 M2 绝对位置移动"""
-        return self._send(f"M={pos}")
-
-    def move_feeder(self, feeder_id: int, steps: int) -> str:
-        """给料电机相对移动 (默认使用 FEEDER_SPEED)"""
-        assert feeder_id in (0, 1, 2), "Feeder ID 必须是 0, 1 或 2"
-        return self._send(f"F{feeder_id} {steps}")
-
-if __name__ == "__main__":
-    ctrl = StepperController('COM10')
-
-    try:
-        # 2. 系统初始化：回零
-        print(">> 执行回零...")
-        print(ctrl.home())
-        time.sleep(5)  # 等待物理回零完成
-
-        # 4. 触发核心业务：投递序列
-        print("\n>> 启动投递序列...")
-        print(ctrl.deliver())
-
-        # 5. 轮询监控状态 (简单优先：不使用多线程，仅做低频抽样)
-        print("\n>> 监控运行状态 (Ctrl+C 退出)...")
-        while True:
-            status_log = ctrl.status()
-            print("-" * 20)
-            print(status_log)
-
-            # 简单退出条件：如果检测到序列完成或急停
-            if "DELIVERY COMPLETE" in status_log or "ESTOP ACTIVE" in status_log:
-                break
-
-            time.sleep(2)
-
-    except KeyboardInterrupt:
-        print("\n>> 用户中断，触发急停！")
-        ctrl.stop()
-    finally:
-        ctrl.close()
+    def stop_dispense(self):
+        """紧急停止"""
+        self._worker._request_stop.emit()

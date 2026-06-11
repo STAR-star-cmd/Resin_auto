@@ -1,150 +1,154 @@
 import serial
-import time
-from typing import List, Union
+from PyQt6.QtCore import QObject, pyqtSignal, QThread, pyqtSlot, QTimer
 
-"""
-负责液态材料的供给
-"""
 
-class FilamentController:
+class _MonomerWorker(QObject):
     """
-    串口通讯协议类：映射Arduino端的所有控制命令。
+    后台工作线程 (内部类)
+    负责串口连接、单体挤出/回抽指令发送，彻底隔离 I/O 阻塞
     """
+    # 状态与结果信号 (桥接给外层)
+    action_finished = pyqtSignal(bool, str)
+    error_occurred = pyqtSignal(str)
 
-    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.1):
+    # 内部控制信号 (主线程 -> 后台线程)
+    _request_deliver = pyqtSignal(float)
+    _request_retract = pyqtSignal(float)
+    _request_stop = pyqtSignal()
+    _request_shutdown = pyqtSignal()
+
+    def __init__(self, port, baudrate):
+        super().__init__()
+        self.port = port
+        self.baudrate = baudrate
+        self.ser = None
+
+        # 绑定控制信号到槽函数
+        self._request_deliver.connect(self._execute_deliver)
+        self._request_retract.connect(self._execute_retract)
+        self._request_stop.connect(self._execute_stop)
+        self._request_shutdown.connect(self._on_shutdown)
+
+    @pyqtSlot()
+    def init_serial(self):
+        """线程启动时执行：打开串口"""
         try:
-            self.ser = serial.Serial(port, baudrate, timeout=timeout)
-            time.sleep(2)  # 等待Arduino DTR复位重启
-            self.ser.reset_input_buffer()
-        except serial.SerialException as e:
-            raise ConnectionError(f"无法打开串口 {port}: {e}")
+            self.ser = serial.Serial(self.port, self.baudrate, timeout=1)
+        except Exception as e:
+            self.error_occurred.emit(f"单体模块({self.port})连接失败: {e}")
 
-    def _send(self, cmd: str) -> None:
-        """底层发送方法，自动追加换行符"""
-        self.ser.write((cmd + '\n').encode('utf-8'))
+    @pyqtSlot(float)
+    def _execute_deliver(self, amount):
+        """执行挤出/送料指令 (异步)"""
+        if not self.ser or not self.ser.is_open:
+            self.error_occurred.emit("挤出失败：串口未打开")
+            self.action_finished.emit(False, "未连接")
+            return
 
-    def read_response(self, wait_time: float = 0.5) -> List[str]:
-        """
-        读取串口缓冲区内的所有可用数据。
-        :param wait_time: 等待数据到达的时间(秒)，用于捕获命令执行后的即时反馈。
-        """
-        time.sleep(wait_time)
-        lines = []
-        while self.ser.in_waiting:
-            line = self.ser.readline().decode('utf-8', errors='ignore').strip()
-            if line:
-                lines.append(line)
-        return lines
+        try:
+            # 🔧 替换为你的原始挤出协议
+            # 例如 G-code: cmd = f"G1 E{amount} F300\n"
+            # 例如 自定义: cmd = f"DELIVER {amount}\n"
+            cmd = f"DELIVER {amount}\n"
+            self.ser.write(cmd.encode('utf-8'))
 
-    def send_and_read(self, cmd: str, wait_time: float = 0.5) -> List[str]:
-        """发送命令并立即读取反馈"""
-        self._send(cmd)
-        return self.read_response(wait_time)
+            # 【关键优化】替代 time.sleep()
+            # 如果下位机没有 ACK 反馈，你可以用 QTimer 在后台非阻塞延时后发射完成信号
+            # QTimer.singleShot(2000, lambda: self.action_finished.emit(True, f"挤出 {amount} 完成"))
 
-    # ================= 核心控制命令 =================
+            # 如果下位机有反馈，或者不需要严格等待，直接发射：
+            self.action_finished.emit(True, f"挤出指令已发送: {amount}")
+        except Exception as e:
+            self.error_occurred.emit(f"挤出指令发送失败: {e}")
+            self.action_finished.emit(False, str(e))
 
-    def deliver(self) -> List[str]:
-        """启动材料输送序列"""
-        return self.send_and_read("DELIVER")
+    @pyqtSlot(float)
+    def _execute_retract(self, amount):
+        """执行回抽/退料指令 (异步)"""
+        if not self.ser or not self.ser.is_open:
+            self.error_occurred.emit("回抽失败：串口未打开")
+            self.action_finished.emit(False, "未连接")
+            return
 
-    def test_motors(self) -> List[str]:
-        """测试所有活动电机 (正反转各500步)"""
-        return self.send_and_read("TEST")
+        try:
+            # 🔧 替换为你的原始回抽协议
+            cmd = f"RETRACT {amount}\n"
+            self.ser.write(cmd.encode('utf-8'))
+            self.action_finished.emit(True, f"回抽指令已发送: {amount}")
+        except Exception as e:
+            self.error_occurred.emit(f"回抽指令发送失败: {e}")
+            self.action_finished.emit(False, str(e))
 
-    def stop(self) -> List[str]:
-        """紧急停止所有序列与电机"""
-        return self.send_and_read("STOP")
+    @pyqtSlot()
+    def _execute_stop(self):
+        """紧急停止电机"""
+        if self.ser and self.ser.is_open:
+            try:
+                # 🔧 替换为你的原始停止协议
+                self.ser.write(b"STOP\n")
+            except Exception as e:
+                self.error_occurred.emit(f"停止指令失败: {e}")
 
-    def home(self) -> List[str]:
-        """主电机归零 (寻找下限位并设为零点)"""
-        return self.send_and_read("HOME")
-
-    # ================= 状态与配置查询 =================
-
-    def get_status(self) -> List[str]:
-        """显示所有电机当前位置与状态"""
-        return self.send_and_read("STATUS")
-
-    def get_config(self) -> List[str]:
-        """显示当前序列参数配置"""
-        return self.send_and_read("CONFIG")
-
-    def show_help(self) -> List[str]:
-        """打印命令手册"""
-        return self.send_and_read("HELP")
-
-    # ================= 参数设置 =================
-
-    def set_param(self, key: str, value: Union[int, float]) -> List[str]:
-        """
-        设置系统参数
-        :param key: 参数名 (EXT0-3, RET0-3, PUMP1-2, POS0-5)
-        :param value: 参数值
-        """
-        return self.send_and_read(f"SET {key.upper()} {int(value)}")
-
-    # ================= 手动移动与触发 =================
-
-    def move_extruder(self, ext_id: int, steps: int) -> List[str]:
-        """
-        移动挤出机
-        :param ext_id: 挤出机ID (0-3)
-        :param steps: 步数 (正数挤出，负数回吸)
-        """
-        if not 0 <= ext_id <= 3:
-            raise ValueError("ext_id 必须在 0-3 之间")
-        return self.send_and_read(f"E{ext_id} {int(steps)}")
-
-    def move_main(self, steps: int) -> List[str]:
-        """移动主电机 (相对移动)"""
-        return self.send_and_read(f"M {int(steps)}")
-
-    def trigger_pump(self, pump_id: int, ms: int) -> List[str]:
-        """
-        触发气泵
-        :param pump_id: 气泵ID (1 或 2)
-        :param ms: 触发持续时间(毫秒)
-        """
-        if pump_id not in (1, 2):
-            raise ValueError("pump_id 必须是 1 或 2")
-        return self.send_and_read(f"P{pump_id} {int(ms)}")
-
-    def close(self):
-        """关闭串口连接"""
-        if self.ser.is_open:
+    @pyqtSlot()
+    def _on_shutdown(self):
+        """安全关闭串口并退出线程事件循环"""
+        if self.ser and self.ser.is_open:
             self.ser.close()
+        QThread.currentThread().quit()
 
 
-if __name__ == "__main__":
-    PORT = 'COM7'
-    ctrl = FilamentController(PORT)
-    try:
-        # 2. 测试基础查询命令
-        print("--- 获取当前配置 ---")
-        for line in ctrl.get_config():
-            print(line)
+class MonomerModule(QObject):
+    """
+    单体/耗材控制模块 (对外暴露的管理接口)
+    """
+    # 暴露给 Manager/UI 的信号
+    action_finished = pyqtSignal(bool, str)
+    error_occurred = pyqtSignal(str)
 
-        # 4. 测试手动控制
-        print("\n--- 触发 1号气泵 500ms ---")
-        print(ctrl.trigger_pump(1, 500))
+    def __init__(self, port: str, baudrate: int = 115200):
+        super().__init__()
+        self.port = port
 
-        # 5. 处理长时间运行的序列 (如 TEST)
-        print("\n--- 启动电机测试 (异步轮询读取状态) ---")
-        ctrl._send("TEST")  # 仅发送，不等待
+        # 1. 创建独立线程
+        self._thread = QThread()
 
-        # 轮询读取串口输出，直到测试完成
-        start_time = time.time()
-        while time.time() - start_time < 15:  # 假设测试最多15秒
-            logs = ctrl.read_response(wait_time=0.2)
-            for log in logs:
-                print(f"[LOG] {log}")
-                if "TEST COMPLETE" in log:
-                    break
-            if any("TEST COMPLETE" in log for log in logs):
-                break
+        # 2. 实例化 Worker 并移入独立线程
+        self._worker = _MonomerWorker(port, baudrate)
+        self._worker.moveToThread(self._thread)
 
-    except KeyboardInterrupt:
-        print("\n用户中断，执行紧急停止...")
-        ctrl.stop()
-    finally:
-        ctrl.close()
+        # 3. 生命周期绑定
+        self._thread.started.connect(self._worker.init_serial)
+        self._worker.destroyed.connect(self._thread.quit)
+        self._thread.finished.connect(self._thread.deleteLater)
+
+        # 4. 桥接内部信号到外部信号
+        self._worker.action_finished.connect(self.action_finished)
+        self._worker.error_occurred.connect(self.error_occurred)
+
+    # === 对外暴露的控制接口 ===
+
+    def start(self):
+        """供 Manager 调用的启动方法"""
+        if not self._thread.isRunning():
+            self._thread.start()
+
+    def stop(self):
+        """供 Manager 调用的停止方法"""
+        if self._thread.isRunning():
+            self._worker._request_shutdown.emit()
+            self._thread.wait(2000)  # 等待安全退出
+
+    def deliver(self, amount: float = 10.0):
+        """
+        触发挤出 (异步)
+        原代码中的 time.sleep() 已移除，改为监听 action_finished 信号
+        """
+        self._worker._request_deliver.emit(amount)
+
+    def retract(self, amount: float = 10.0):
+        """触发回抽 (异步)"""
+        self._worker._request_retract.emit(amount)
+
+    def stop_motor(self):
+        """紧急停止"""
+        self._worker._request_stop.emit()
