@@ -1,0 +1,33 @@
+project/
+├── main.py                  # 唯一入口：初始化配置、启动事件循环、挂载UI
+├── config/                  # YAML/JSON：硬件端口、配方参数、安全阈值
+├── src/
+│   ├── hardware/            # 硬件抽象层（每个设备独立文件）
+│   │   ├── base_driver.py   # 统一基类：open/close/async_read/async_write
+│   │   ├── stepper_syringe.py
+│   │   ├── heated_pump.py
+│   │   ├── screw_feeder.py
+│   │   ├── ultrasonic.py
+│   │   ├── stirrer.py
+│   │   ├── tensile_machine.py
+│   │   └── robot_arm.py
+│   ├── control/             # 业务与控制层
+│   │   ├── device_controller.py  # 设备指令封装、单位转换、限幅
+│   │   ├── workflow.py           # 配方执行流程、工位协调
+│   │   ├── state_machine.py      # 全局状态机（空闲/供料/脱泡/拉伸/报警）
+│   │   └── safety.py             # 急停、互锁、超时保护
+│   ├── ui/                  # 界面层
+│   │   ├── main_window.py   # Tab 容器、菜单栏、全局状态栏
+│   │   ├── tabs/
+│   │   │   ├── tab_overview.py   # Tab1：仪表盘、总控启停、全局状态
+│   │   │   └── tab_supply.py     # Tab2：各物料挤出参数、进度、手动微调
+│   │   └── widgets/              # 可复用组件：仪表盘、趋势图、报警弹窗
+│   ├── models/              # 数据模型
+│   │   ├── recipe.py        # 配方数据结构（单体/低聚物/粉末比例、工艺参数）
+│   │   └── device_status.py # 设备状态快照（温度、位置、错误码等）
+│   └── core/                # 基础设施
+│       ├── comm_manager.py  # 统一串口/网口管理（线程池+异步队列）
+│       ├── event_bus.py     # 全局事件总线（硬件状态变更 → UI刷新）
+│       └── logger.py        # 分级日志+操作审计
+├── tests/                   # 硬件模拟器、单元测试、流程集成测试
+└── requirements.txt

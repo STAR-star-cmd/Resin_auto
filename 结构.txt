@@ -1,0 +1,17 @@
+Resin_auto/
+│
+├── main.py                 # 程序唯一入口：负责实例化 Manager 和 UI，并连接它们的信号
+│
+├── hardware/               # 【硬件层】完全独立，不包含任何 PyQt UI 组件
+│   ├── comm_manager.py     # 逻辑上的 Manager (统一暴露接口，管理所有子线程)
+│   ├── temperature_module.py      # 温度控制模块
+│   ├── weight1_module.py           # 称重模块1
+│   ├── weight2_module.py           # 称重模块2
+│   ├── monomer_module.py          # 单体挤出模块
+│   ├── powder_module.py           # 固体粉末挤出模块
+│   ├── stirring_module.py           # 超声及搅拌+UV固化
+│   └──raspberrypi_module.py           # 使用树莓派作为拉伸机和气缸及传感器的上位机，再与PC进行通讯
+│
+└── ui/                     # 【UI层】只负责显示和接收用户点击，不包含硬件协议
+    ├── main_window.py      #
+    └── dialogs/            # 各种弹窗
