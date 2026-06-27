@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QGroupBox, QLabel, QPushButton, QPlainTextEdit, QMessageBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
-from ui.dialog import TemperatureDialog, SystemStatusDialog, SystemSettingsDialog, DebugDialog
+from ui.dialog import TemperatureDialog, SystemStatusDialog, SystemSettingsDialog, DebugDialog, StartConfigDialog
 
 
 # ================= 主窗口 =================
@@ -147,7 +147,7 @@ class MainWindow(QMainWindow):
             btn.setMinimumHeight(45)
 
         # 修复：绑定控制按钮的信号
-        self.btn_start.clicked.connect(self.request_start_process.emit)
+        self.btn_start.clicked.connect(self.open_start_config_dialog)
         self.btn_stop.clicked.connect(self.request_stop_process.emit)
         self.btn_settings.clicked.connect(self.open_settings_dialog)
         self.btn_status.clicked.connect(self.open_status_dialog)
@@ -189,6 +189,14 @@ class MainWindow(QMainWindow):
 
     def open_debug_dialog(self):
         dialog = DebugDialog(self)
+        dialog.exec()
+
+    def open_start_config_dialog(self):
+        dialog = StartConfigDialog(self)
+        dialog.buttons[0].clicked.connect(lambda: (self.request_start_process.emit(), dialog.accept()))
+        for i, name in enumerate(["Module1", "Module2", "Module3", "Module4", "Module15"], start=1):
+            dialog.buttons[i].clicked.connect(lambda _, n=name: self.append_log(f"[Config] 进入 {n} 控制界面"))
+
         dialog.exec()
 
     # 修复：增加 @pyqtSlot 确保跨线程更新 UI 的安全

@@ -212,3 +212,39 @@ class DebugDialog(QDialog):
         btn_close.setMinimumHeight(40)
         btn_close.clicked.connect(self.accept)
         main_layout.addWidget(btn_close)
+
+# ================= 启动配置对话框 =================
+class StartConfigDialog(QDialog):
+    """点击 Start Config 后弹出的控制入口对话框"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Start Configuration")
+        self.setMinimumWidth(300)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # 定义6个控制按钮
+        buttons_text = [
+            "Overall",
+            "Module1",
+            "Module2",
+            "Module3",
+            "Module4",
+            "Module5"
+        ]
+
+        self.buttons = []
+        for text in buttons_text:
+            btn = QPushButton(text)
+            btn.setMinimumHeight(45)
+            layout.addWidget(btn)
+            self.buttons.append(btn)
+
+        # 底部关闭按钮
+        btn_close = QPushButton("取消 / Close")
+        btn_close.setStyleSheet("background-color: #6c757d; margin-top: 10px;")
+        btn_close.clicked.connect(self.reject)
+        layout.addWidget(btn_close)
