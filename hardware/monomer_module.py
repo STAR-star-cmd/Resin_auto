@@ -8,11 +8,7 @@ class _MonomerWorker(QObject):
     error_occurred = pyqtSignal(str)
     response_received = pyqtSignal(str)
 
-    # 保留原有信号以兼容已有调用
-    _request_deliver = pyqtSignal(float)
-    _request_retract = pyqtSignal(float)
-    _request_stop = pyqtSignal()
-    # 新增通用指令信号
+    # 统一使用通用指令信号
     _request_cmd = pyqtSignal(str)
 
     def __init__(self, port: str, baudrate: int = 115200):
@@ -21,10 +17,6 @@ class _MonomerWorker(QObject):
         self.baudrate = baudrate
         self.ser = None
 
-        # 连接所有信号到对应槽函数
-        self._request_deliver.connect(self._execute_deliver)
-        self._request_retract.connect(self._execute_retract)
-        self._request_stop.connect(self._execute_stop)
         self._request_cmd.connect(self._execute_raw_cmd)
 
     @pyqtSlot()
@@ -54,39 +46,24 @@ class _MonomerWorker(QObject):
             self.error_occurred.emit("串口未打开")
             self.action_finished.emit(False, "串口未打开")
             return
+
+        full_cmd = cmd.strip()
+        if not full_cmd:
+            return
+
         try:
-            full_cmd = cmd.strip() + "\n"
-            self.ser.write(full_cmd.encode('utf-8'))
+            self.ser.write((full_cmd + "\n").encode('utf-8'))
             self.ser.flush()
 
-            # STATUS/CONFIG 有多行返回，延迟读取；其余指令即时完成
-            upper = cmd.upper().split()[0]
-            if upper in ("STATUS", "CONFIG"):
+            # STATUS/CONFIG/HELP 有多行返回，延迟读取；其余指令即时完成
+            upper = full_cmd.upper().split()[0]
+            if upper in ("STATUS", "CONFIG", "HELP"):
                 QTimer.singleShot(600, self._read_response)
             else:
-                self.action_finished.emit(True, f"已发送: {cmd}")
+                self.action_finished.emit(True, f"已发送: {full_cmd}")
         except Exception as e:
             self.error_occurred.emit(f"发送失败: {e}")
             self.action_finished.emit(False, str(e))
-
-    @pyqtSlot(float)
-    def _execute_deliver(self, amount: float):
-        """修正：DELIVER为无参序列命令；amount>0时用E0正步数替代"""
-        if amount > 0:
-            steps = int(abs(amount))
-            self._execute_raw_cmd(f"E0 {steps}")
-        else:
-            self._execute_raw_cmd("DELIVER")
-
-    @pyqtSlot(float)
-    def _execute_retract(self, amount: float):
-        """修正：Arduino无RETRACT指令，用E0负步数实现回抽"""
-        steps = int(abs(amount))
-        self._execute_raw_cmd(f"E0 -{steps}")
-
-    @pyqtSlot()
-    def _execute_stop(self):
-        self._execute_raw_cmd("STOP")
 
     def _read_response(self):
         """非阻塞读取Arduino多行响应"""
@@ -124,62 +101,78 @@ class MonomerModule(QObject):
         self._worker.response_received.connect(self.response_received)
 
     # ==================== 生命周期管理 ====================
-    def open(self):
+    def start(self):
         self._worker.open_serial()
 
-    def close(self):
+    def stop(self):
         self._worker.close_serial()
 
-    # ==================== 原有接口（协议已修正） ====================
-    def deliver_monomer(self, amount: float = 0):
-        """输送单体：amount>0为指定步数，0或负数为完整DELIVER序列"""
-        self._worker._request_deliver.emit(amount)
+    # ==================== 完整指令接口 (1:1 映射 Arduino 全部功能) ====================
+    def start_delivery(self):
+        """启动材料输送序列 (DELIVER)"""
+        self._worker._request_cmd.emit("DELIVER")
 
-    def retract_monomer(self, amount: float):
-        """回抽单体（内部转换为E0负步数）"""
-        self._worker._request_retract.emit(amount)
-
-    def stop_motor(self):
-        """紧急停止"""
-        self._worker._request_stop.emit()
-
-    # ==================== 新增完整指令接口 ====================
-    def home(self):
-        """主电机归零"""
-        self._worker._request_cmd.emit("HOME")
+    def feed_station(self, station_id: int):
+        """单次工位给料 (FEED <0-5>) 0-3为挤出机, 4为泵1, 5为泵2"""
+        if 0 <= station_id <= 5:
+            self._worker._request_cmd.emit(f"FEED {station_id}")
+        else:
+            self.error_occurred.emit("工位ID必须在0-5之间")
 
     def test_motors(self):
-        """测试所有电机"""
+        """测试所有活动电机 (TEST)"""
         self._worker._request_cmd.emit("TEST")
 
+    def emergency_stop(self):
+        """紧急停止所有序列与电机 (STOP)"""
+        self._worker._request_cmd.emit("STOP")
+
+    def home_main(self):
+        """主电机归零 (HOME)"""
+        self._worker._request_cmd.emit("HOME")
+
     def get_status(self):
-        """查询电机状态（结果通过response_received信号异步返回）"""
+        """查询电机状态 (STATUS) - 结果通过 response_received 异步返回"""
         self._worker._request_cmd.emit("STATUS")
 
     def get_config(self):
-        """查询当前配置参数（结果通过response_received信号异步返回）"""
+        """查询当前配置参数 (CONFIG) - 结果通过 response_received 异步返回"""
         self._worker._request_cmd.emit("CONFIG")
 
     def set_param(self, key: str, value: int):
-        """
-        设置参数
-        key: EXT0/EXT1/EXT2/EXT3/RET0/RET1/RET2/RET3/PUMP1/PUMP2/POS0/POS1/POS2/POS3
-        value: 整数值
-        """
+        """设置参数 (SET <k> <v>) key: EXT0-3/RET0-3/PUMP1-2/POS0-5"""
         self._worker._request_cmd.emit(f"SET {key} {value}")
 
     def move_extruder(self, extruder_id: int, steps: int):
-        """移动指定挤出机 E0-E3"""
-        self._worker._request_cmd.emit(f"E{extruder_id} {steps}")
+        """移动挤出机 (E<0-3> <stp>)"""
+        if 0 <= extruder_id <= 3:
+            self._worker._request_cmd.emit(f"E{extruder_id} {steps}")
+        else:
+            self.error_occurred.emit("挤出机ID必须在0-3之间")
 
     def move_main(self, steps: int):
-        """移动主电机"""
+        """移动主电机 (M <steps>)"""
         self._worker._request_cmd.emit(f"M {steps}")
 
     def trigger_pump(self, pump_id: int, duration_ms: int):
-        """触发气泵 pump_id: 1或2"""
-        self._worker._request_cmd.emit(f"P{pump_id} {duration_ms}")
+        """触发气泵 (P1/P2 <ms>)"""
+        if pump_id in (1, 2):
+            self._worker._request_cmd.emit(f"P{pump_id} {duration_ms}")
+        else:
+            self.error_occurred.emit("气泵ID必须是1或2")
 
-    def deliver_sequence(self):
-        """启动完整输送序列（无参DELIVER）"""
-        self._worker._request_cmd.emit("DELIVER")
+    def get_help(self):
+        """获取帮助菜单"""
+        self._worker._request_cmd.emit("HELP")
+
+    # ==================== 兼容旧版 UI 接口 ====================
+    def deliver_monomer(self, amount: float = 0):
+        """兼容旧UI：amount >0为指定E0步数，0或负数为完整DELIVER序列"""
+        if amount > 0:
+            self.move_extruder(0, int(abs(amount)))
+        else:
+            self.start_delivery()
+
+    def retract_monomer(self, amount: float):
+        """兼容旧UI：回抽单体（内部转换为E0负步数）"""
+        self.move_extruder(0, -int(abs(amount)))

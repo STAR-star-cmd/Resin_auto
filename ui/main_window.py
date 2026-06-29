@@ -28,7 +28,12 @@ class MainWindow(QMainWindow):
     request_monomer_status = pyqtSignal()
     request_monomer_config = pyqtSignal()
     request_monomer_set_param = pyqtSignal(str, int)
-    request_monomer_deliver_seq = pyqtSignal()
+    request_start_monomer_delivery = pyqtSignal()
+    request_feed_monomer = pyqtSignal(int)
+    request_move_monomer_extruder = pyqtSignal(int, int)
+    request_move_monomer_main = pyqtSignal(int)
+    request_trigger_monomer_pump = pyqtSignal(int, int)
+    request_monomer_help = pyqtSignal()
 
     # PowderModule 控制信号
     request_dispense_powder = pyqtSignal(int, float)  # device_id, amount
@@ -215,7 +220,8 @@ class MainWindow(QMainWindow):
 
         def on_module1_clicked():
             mono_dialog = MonomerControlDialog(self)
-            # 绑定所有按钮到对应信号
+
+            # 1. 基础动作
             mono_dialog.btn_deliver.clicked.connect(
                 lambda: self.request_deliver_monomer.emit(mono_dialog.amount_spin.value()))
             mono_dialog.btn_retract.clicked.connect(
@@ -223,13 +229,33 @@ class MainWindow(QMainWindow):
             mono_dialog.btn_stop.clicked.connect(self.request_monomer_stop.emit)
             mono_dialog.btn_home.clicked.connect(self.request_monomer_home.emit)
             mono_dialog.btn_test.clicked.connect(self.request_monomer_test.emit)
-            mono_dialog.btn_deliver_seq.clicked.connect(self.request_monomer_deliver_seq.emit)
+            mono_dialog.btn_deliver_seq.clicked.connect(self.request_start_monomer_delivery.emit)
+
+            # 2. 工位给料
+            mono_dialog.btn_feed.clicked.connect(
+                lambda: self.request_feed_monomer.emit(mono_dialog.feed_station_spin.value()))
+
+            # 3. 独立电机控制 (使用 lambda 闭包绑定索引)
+            for i, (spin, btn) in enumerate(mono_dialog.ext_spins):
+                btn.clicked.connect(lambda _, idx=i, sp=spin: self.request_move_monomer_extruder.emit(idx, sp.value()))
+
+            mono_dialog.btn_move_main.clicked.connect(
+                lambda: self.request_move_monomer_main.emit(mono_dialog.main_spin.value()))
+
+            mono_dialog.btn_pump1.clicked.connect(
+                lambda: self.request_trigger_monomer_pump.emit(1, mono_dialog.pump_spin.value()))
+            mono_dialog.btn_pump2.clicked.connect(
+                lambda: self.request_trigger_monomer_pump.emit(2, mono_dialog.pump_spin.value()))
+
+            # 4. 参数与查询
             mono_dialog.btn_status.clicked.connect(self.request_monomer_status.emit)
             mono_dialog.btn_config.clicked.connect(self.request_monomer_config.emit)
+            mono_dialog.btn_help.clicked.connect(self.request_monomer_help.emit)
             mono_dialog.btn_set_param.clicked.connect(
                 lambda: self.request_monomer_set_param.emit(
                     mono_dialog.param_key_combo.currentText(),
                     mono_dialog.param_value_spin.value()))
+
             mono_dialog.exec()
 
         def on_module2_clicked():

@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QLabel, QPushButton,
-    QDialog, QSpinBox, QDoubleSpinBox, QDialogButtonBox, QFormLayout, QScrollArea, QTabWidget, QHBoxLayout, QComboBox)
+    QDialog, QSpinBox, QDoubleSpinBox, QDialogButtonBox, QFormLayout, QScrollArea, QTabWidget, QHBoxLayout, QComboBox,
+    QPlainTextEdit, QGridLayout)
 from PyQt6.QtCore import Qt
 
 # ================= 温度设置对话框 =================
@@ -256,46 +257,118 @@ class MonomerControlDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Module1 - Monomer Control")
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(650)
+        self.setMinimumHeight(750)
 
         main_layout = QVBoxLayout(self)
 
-        # === 基础动作区 ===
-        action_group = QGroupBox("Basic Actions")
-        action_layout = QFormLayout()
+        # 使用滚动区域防止内容过多
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_widget = QWidget()
+        layout = QVBoxLayout(scroll_widget)
 
+        # === 1. 基础动作与序列区 ===
+        action_group = QGroupBox("Sequence & Global Actions")
+        action_layout = QVBoxLayout()
+
+        btn_layout1 = QHBoxLayout()
+        self.btn_deliver_seq = QPushButton("DELIVER Sequence (全序列)")
+        self.btn_home = QPushButton("HOME (主电机归零)")
+        self.btn_test = QPushButton("TEST (测试电机)")
+        self.btn_stop = QPushButton("STOP (急停)")
+        self.btn_stop.setStyleSheet("background-color: #dc3545; color: white;")
+        for btn in (self.btn_deliver_seq, self.btn_home, self.btn_test, self.btn_stop):
+            btn.setMinimumHeight(35)
+            btn_layout1.addWidget(btn)
+        action_layout.addLayout(btn_layout1)
+
+        # 兼容旧版的 Deliver/Retract (通过E0)
+        btn_layout2 = QHBoxLayout()
         self.amount_spin = QDoubleSpinBox()
         self.amount_spin.setRange(0.0, 9999.0)
         self.amount_spin.setValue(10.0)
         self.amount_spin.setSuffix(" steps")
-        action_layout.addRow("Amount:", self.amount_spin)
+        btn_layout2.addWidget(QLabel("E0 Steps:"))
+        btn_layout2.addWidget(self.amount_spin)
 
-        btn_layout = QHBoxLayout()
-        self.btn_deliver = QPushButton("Deliver (输送)")
-        self.btn_retract = QPushButton("Retract (回抽)")
-        self.btn_stop = QPushButton("STOP (急停)")
-        self.btn_stop.setStyleSheet("background-color: #dc3545; color: white;")
-        for btn in (self.btn_deliver, self.btn_retract, self.btn_stop):
+        self.btn_deliver = QPushButton("Deliver E0 (输送)")
+        self.btn_retract = QPushButton("Retract E0 (回抽)")
+        for btn in (self.btn_deliver, self.btn_retract):
             btn.setMinimumHeight(35)
-            btn_layout.addWidget(btn)
-        action_layout.addRow(btn_layout)
-
-        btn_extra_layout = QHBoxLayout()
-        self.btn_home = QPushButton("HOME (归零)")
-        self.btn_test = QPushButton("TEST (测试电机)")
-        self.btn_deliver_seq = QPushButton("DELIVER Sequence")
-        for btn in (self.btn_home, self.btn_test, self.btn_deliver_seq):
-            btn.setMinimumHeight(35)
-            btn_extra_layout.addWidget(btn)
-        action_layout.addRow(btn_extra_layout)
+            btn_layout2.addWidget(btn)
+        action_layout.addLayout(btn_layout2)
 
         action_group.setLayout(action_layout)
-        main_layout.addWidget(action_group)
+        layout.addWidget(action_group)
 
-        # === 参数设置区 ===
-        param_group = QGroupBox("Parameter Setting")
-        param_layout = QFormLayout()
+        # === 2. 单次工位给料 (FEED) ===
+        feed_group = QGroupBox("Single Station Feed (FEED 0-5)")
+        feed_layout = QHBoxLayout()
+        self.feed_station_spin = QSpinBox()
+        self.feed_station_spin.setRange(0, 5)
+        self.feed_station_spin.setValue(0)
+        self.btn_feed = QPushButton("FEED Station")
+        self.btn_feed.setMinimumHeight(35)
+        self.btn_feed.setStyleSheet("background-color: #17a2b8; color: white;")
+        feed_layout.addWidget(QLabel("Station ID (0-3:Extruder, 4:P1, 5:P2):"))
+        feed_layout.addWidget(self.feed_station_spin)
+        feed_layout.addWidget(self.btn_feed)
+        feed_group.setLayout(feed_layout)
+        layout.addWidget(feed_group)
 
+        # === 3. 独立电机与气泵控制 ===
+        motor_group = QGroupBox("Direct Motor & Pump Control")
+        motor_layout = QGridLayout()
+
+        # 挤出机 E0-E3
+        self.ext_spins = []
+        for i in range(4):
+            lbl = QLabel(f"E{i} Steps:")
+            spin = QSpinBox()
+            spin.setRange(-99999, 99999)
+            spin.setValue(0)
+            btn = QPushButton(f"Move E{i}")
+            btn.setMinimumHeight(30)
+            motor_layout.addWidget(lbl, i, 0)
+            motor_layout.addWidget(spin, i, 1)
+            motor_layout.addWidget(btn, i, 2)
+            self.ext_spins.append((spin, btn))
+
+        # 主电机 M
+        self.main_spin = QSpinBox()
+        self.main_spin.setRange(-99999, 99999)
+        self.main_spin.setValue(0)
+        self.btn_move_main = QPushButton("Move Main (M)")
+        self.btn_move_main.setMinimumHeight(30)
+        motor_layout.addWidget(QLabel("Main Steps:"), 4, 0)
+        motor_layout.addWidget(self.main_spin, 4, 1)
+        motor_layout.addWidget(self.btn_move_main, 4, 2)
+
+        # 气泵 P1/P2
+        self.pump_spin = QSpinBox()
+        self.pump_spin.setRange(0, 99999)
+        self.pump_spin.setValue(1000)
+        self.pump_spin.setSuffix(" ms")
+        self.btn_pump1 = QPushButton("Trigger P1")
+        self.btn_pump2 = QPushButton("Trigger P2")
+        for btn in (self.btn_pump1, self.btn_pump2):
+            btn.setMinimumHeight(30)
+        motor_layout.addWidget(QLabel("Pump Duration:"), 5, 0)
+        motor_layout.addWidget(self.pump_spin, 5, 1)
+        pump_btn_layout = QHBoxLayout()
+        pump_btn_layout.addWidget(self.btn_pump1)
+        pump_btn_layout.addWidget(self.btn_pump2)
+        motor_layout.addLayout(pump_btn_layout, 5, 2)
+
+        motor_group.setLayout(motor_layout)
+        layout.addWidget(motor_group)
+
+        # === 4. 参数设置与查询 ===
+        param_group = QGroupBox("Parameter & Query")
+        param_layout = QVBoxLayout()
+
+        set_layout = QHBoxLayout()
         self.param_key_combo = QComboBox()
         self.param_key_combo.addItems([
             "EXT0", "EXT1", "EXT2", "EXT3",
@@ -307,24 +380,37 @@ class MonomerControlDialog(QDialog):
         self.param_value_spin.setRange(-99999, 99999)
         self.btn_set_param = QPushButton("SET Param")
         self.btn_set_param.setMinimumHeight(35)
+        set_layout.addWidget(self.param_key_combo)
+        set_layout.addWidget(self.param_value_spin)
+        set_layout.addWidget(self.btn_set_param)
+        param_layout.addLayout(set_layout)
 
-        param_row = QHBoxLayout()
-        param_row.addWidget(self.param_key_combo)
-        param_row.addWidget(self.param_value_spin)
-        param_row.addWidget(self.btn_set_param)
-        param_layout.addRow("Key / Value:", param_row)
-
-        param_group.setLayout(param_layout)
-        main_layout.addWidget(param_group)
-
-        # === 查询区 ===
         query_layout = QHBoxLayout()
         self.btn_status = QPushButton("Get STATUS")
         self.btn_config = QPushButton("Get CONFIG")
-        for btn in (self.btn_status, self.btn_config):
+        self.btn_help = QPushButton("Get HELP")
+        for btn in (self.btn_status, self.btn_config, self.btn_help):
             btn.setMinimumHeight(35)
             query_layout.addWidget(btn)
-        main_layout.addLayout(query_layout)
+        param_layout.addLayout(query_layout)
+
+        param_group.setLayout(param_layout)
+        layout.addWidget(param_group)
+
+        # === 5. 响应控制台 (黑底绿字终端风格) ===
+        console_group = QGroupBox("Response Console (Async)")
+        console_layout = QVBoxLayout()
+        self.response_text = QPlainTextEdit()
+        self.response_text.setReadOnly(True)
+        self.response_text.setMaximumHeight(150)
+        self.response_text.setStyleSheet("background-color: #1e1e1e; color: #00ff00; font-family: Consolas, monospace;")
+        console_layout.addWidget(self.response_text)
+        console_group.setLayout(console_layout)
+        layout.addWidget(console_group)
+
+        layout.addStretch()
+        scroll.setWidget(scroll_widget)
+        main_layout.addWidget(scroll)
 
         # === 底部关闭按钮 ===
         btn_close = QPushButton("Close")

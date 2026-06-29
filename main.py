@@ -91,8 +91,20 @@ def main():
         window.request_monomer_config.connect(hw_manager.get_monomer_config)
     if hasattr(window, 'request_monomer_set_param'):
         window.request_monomer_set_param.connect(hw_manager.set_monomer_param)
-    if hasattr(window, 'request_monomer_deliver_seq'):
-        window.request_monomer_deliver_seq.connect(hw_manager.deliver_monomer_sequence)
+    if hasattr(window, 'request_start_monomer_delivery'):
+        window.request_start_monomer_delivery.connect(hw_manager.start_monomer_delivery)
+
+    # 🌟 新增细粒度控制连接
+    if hasattr(window, 'request_feed_monomer'):
+        window.request_feed_monomer.connect(hw_manager.feed_monomer_station)
+    if hasattr(window, 'request_move_monomer_extruder'):
+        window.request_move_monomer_extruder.connect(hw_manager.move_monomer_extruder)
+    if hasattr(window, 'request_move_monomer_main'):
+        window.request_move_monomer_main.connect(hw_manager.move_monomer_main)
+    if hasattr(window, 'request_trigger_monomer_pump'):
+        window.request_trigger_monomer_pump.connect(hw_manager.trigger_monomer_pump)
+    if hasattr(window, 'request_monomer_help'):
+        window.request_monomer_help.connect(hw_manager.get_monomer_help)
 
     # powder
     if hasattr(window, 'request_dispense_powder'):

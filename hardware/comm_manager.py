@@ -13,6 +13,7 @@ class HardwareManager(QObject):
     temp_data = pyqtSignal(dict)  # 聚合后的温度数据 {"CH1": 25.0, ...}
     weight_data = pyqtSignal(str, dict)  # 聚合后的重量数据 (channel_name, data)，如 ("weight_ch1", {...})
     device_ready = pyqtSignal(str)  # 设备就绪信号 (携带设备名称)
+    monomer_response = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -58,7 +59,7 @@ class HardwareManager(QObject):
             device_instance.action_finished.connect(
                 lambda ok, msg, n=name: self.log_message.emit(f"[{n}] {msg}")
             )
-
+            device_instance.response_received.connect(self.monomer_response.emit)
     # === 生命周期管理 ===
 
     def start_all(self):
@@ -102,45 +103,80 @@ class HardwareManager(QObject):
         dev = self._get_device("stir")
         if dev: dev.u(state)
 
-    def dispense_powder(self, device_id: int, amount: float):
-        dev = self._get_device("powder")
-        if dev: dev.dispense(device_id, amount)
-
-    def deliver_monomer(self, amount):
+    # monomer
+    def deliver_monomer(self, amount: float = 0):
+        """兼容旧UI：输送单体 (amount>0为E0步数，<=0为完整序列)"""
         dev = self._get_device("monomer")
         if dev: dev.deliver_monomer(amount)
 
-    def retract_monomer(self, amount):
+    def retract_monomer(self, amount: float):
+        """兼容旧UI：回抽单体"""
         dev = self._get_device("monomer")
         if dev: dev.retract_monomer(amount)
 
-    def stop_monomer(self):
+    def start_monomer_delivery(self):
+        """启动完整输送序列 (DELIVER)"""
         dev = self._get_device("monomer")
-        if dev: dev.stop_motor()
+        if dev: dev.start_delivery()
 
-    def home_monomer(self):
+    def feed_monomer_station(self, station_id: int):
+        """单次工位给料 (FEED <0-5>) 0-3挤出机, 4泵1, 5泵2"""
         dev = self._get_device("monomer")
-        if dev: dev.home()
+        if dev: dev.feed_station(station_id)
 
     def test_monomer(self):
+        """测试所有电机 (TEST)"""
         dev = self._get_device("monomer")
         if dev: dev.test_motors()
 
+    def stop_monomer(self):
+        """紧急停止 (STOP)"""
+        dev = self._get_device("monomer")
+        if dev: dev.emergency_stop()
+
+    def home_monomer(self):
+        """主电机归零 (HOME)"""
+        dev = self._get_device("monomer")
+        if dev: dev.home_main()
+
     def get_monomer_status(self):
+        """查询状态 (STATUS) -> 触发 monomer_response 信号"""
         dev = self._get_device("monomer")
         if dev: dev.get_status()
 
     def get_monomer_config(self):
+        """查询配置 (CONFIG) -> 触发 monomer_response 信号"""
         dev = self._get_device("monomer")
         if dev: dev.get_config()
 
     def set_monomer_param(self, key: str, value: int):
+        """设置参数 (SET <k> <v>)"""
         dev = self._get_device("monomer")
         if dev: dev.set_param(key, value)
 
-    def deliver_monomer_sequence(self):
+    def move_monomer_extruder(self, extruder_id: int, steps: int):
+        """移动挤出机 (E<0-3> <stp>)"""
         dev = self._get_device("monomer")
-        if dev: dev.deliver_sequence()
+        if dev: dev.move_extruder(extruder_id, steps)
+
+    def move_monomer_main(self, steps: int):
+        """移动主电机 (M <steps>)"""
+        dev = self._get_device("monomer")
+        if dev: dev.move_main(steps)
+
+    def trigger_monomer_pump(self, pump_id: int, duration_ms: int):
+        """触发气泵 (P1/P2 <ms>)"""
+        dev = self._get_device("monomer")
+        if dev: dev.trigger_pump(pump_id, duration_ms)
+
+    def get_monomer_help(self):
+        """获取帮助菜单"""
+        dev = self._get_device("monomer")
+        if dev: dev.get_help()
+
+    def dispense_powder(self, device_id: int, amount: float):
+        dev = self._get_device("powder")
+        if dev: dev.dispense(device_id, amount)
 
     def home_powder(self):
         dev = self._get_device("powder")
