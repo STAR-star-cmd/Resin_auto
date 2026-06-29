@@ -339,6 +339,7 @@ class PowderControlDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
         self.setWindowTitle("Module2 - Powder Control")
         self.setMinimumWidth(500)
 
@@ -380,11 +381,6 @@ class PowderControlDialog(QDialog):
             steps_layout.addWidget(btn_set_steps)
             form.addRow("Feeder Steps:", steps_layout)
 
-            # 归零按钮
-            btn_home = QPushButton("HOME (归零)")
-            btn_home.setMinimumHeight(35)
-            form.addRow(btn_home)
-
             group.setLayout(form)
             tab_layout.addWidget(group)
             tab_layout.addStretch()
@@ -398,7 +394,6 @@ class PowderControlDialog(QDialog):
                 'btn_dispense': btn_dispense,
                 'steps_spin': steps_spin,
                 'btn_set_steps': btn_set_steps,
-                'btn_home': btn_home
             })
 
         main_layout.addWidget(self.tabs)
@@ -406,13 +401,13 @@ class PowderControlDialog(QDialog):
         # === 全局控制区 ===
         global_group = QGroupBox("Global Actions")
         global_layout = QHBoxLayout()
-
+        self.btn_home = QPushButton("Home (回位)")
         self.btn_stop = QPushButton("STOP (急停)")
         self.btn_stop.setStyleSheet("background-color: #dc3545; color: white;")
         self.btn_reset = QPushButton("Reset E-Stop (复位)")
         self.btn_status = QPushButton("Get Status (状态)")
 
-        for btn in (self.btn_stop, self.btn_reset, self.btn_status):
+        for btn in (self.btn_stop, self.btn_reset, self.btn_status, self.btn_home):
             btn.setMinimumHeight(40)
             global_layout.addWidget(btn)
 

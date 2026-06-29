@@ -142,9 +142,9 @@ class HardwareManager(QObject):
         dev = self._get_device("monomer")
         if dev: dev.deliver_sequence()
 
-    def home_powder(self, device_id: int):
+    def home_powder(self):
         dev = self._get_device("powder")
-        if dev: dev.home(device_id)
+        if dev: dev.home()
 
     def set_powder_steps(self, device_id: int, steps: int):
         dev = self._get_device("powder")

@@ -32,7 +32,7 @@ class MainWindow(QMainWindow):
 
     # PowderModule 控制信号
     request_dispense_powder = pyqtSignal(int, float)  # device_id, amount
-    request_home_powder = pyqtSignal(int)             # device_id
+    request_home_powder = pyqtSignal()
     request_set_powder_steps = pyqtSignal(int, int)   # device_id, steps
     request_stop_powder = pyqtSignal()
     request_reset_powder = pyqtSignal()
@@ -238,12 +238,11 @@ class MainWindow(QMainWindow):
             for feeder in powder_dialog.feeders:
                 feeder['btn_dispense'].clicked.connect(
                     lambda _, f=feeder: self.request_dispense_powder.emit(f['id'], f['amount_spin'].value()))
-                feeder['btn_home'].clicked.connect(
-                    lambda _, f=feeder: self.request_home_powder.emit(f['id']))
                 feeder['btn_set_steps'].clicked.connect(
                     lambda _, f=feeder: self.request_set_powder_steps.emit(f['id'], f['steps_spin'].value()))
 
             # 绑定全局按钮
+            powder_dialog.btn_home.clicked.connect(self.request_home_powder.emit)
             powder_dialog.btn_stop.clicked.connect(self.request_stop_powder.emit)
             powder_dialog.btn_reset.clicked.connect(self.request_reset_powder.emit)
             powder_dialog.btn_status.clicked.connect(self.request_status_powder.emit)
