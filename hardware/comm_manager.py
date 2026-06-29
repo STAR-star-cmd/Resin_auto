@@ -102,9 +102,9 @@ class HardwareManager(QObject):
         dev = self._get_device("stir")
         if dev: dev.u(state)
 
-    def dispense_powder(self, amount):
+    def dispense_powder(self, device_id: int, amount: float):
         dev = self._get_device("powder")
-        if dev: dev.dispense(amount)
+        if dev: dev.dispense(device_id, amount)
 
     def deliver_monomer(self, amount):
         dev = self._get_device("monomer")
@@ -141,6 +141,33 @@ class HardwareManager(QObject):
     def deliver_monomer_sequence(self):
         dev = self._get_device("monomer")
         if dev: dev.deliver_sequence()
+
+    def home_powder(self, device_id: int):
+        dev = self._get_device("powder")
+        if dev: dev.home(device_id)
+
+    def set_powder_steps(self, device_id: int, steps: int):
+        dev = self._get_device("powder")
+        if dev:
+            # 假设下位机协议使用 M1, M2, M3 作为步数配置前缀
+            dev.set_feeder_steps({f"M{device_id}": steps})
+
+    def stop_powder(self):
+        dev = self._get_device("powder")
+        if dev: dev.emergency_stop()
+
+    def reset_powder(self):
+        dev = self._get_device("powder")
+        if dev: dev.reset_estop()
+
+    def status_powder(self):
+        dev = self._get_device("powder")
+        if dev: dev.get_status()
+
+    # --- 重量闭环透传接口 ---
+    def update_powder_weight(self, weight: float):
+        dev = self._get_device("powder")
+        if dev: dev.update_weight(weight)
 
     # === 内部辅助方法 ===
     def _get_device(self, prefix: str):

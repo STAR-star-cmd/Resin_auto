@@ -332,3 +332,96 @@ class MonomerControlDialog(QDialog):
         btn_close.setStyleSheet("background-color: #6c757d; margin-top: 10px;")
         btn_close.clicked.connect(self.accept)
         main_layout.addWidget(btn_close)
+
+
+class PowderControlDialog(QDialog):
+    """Module2 专用：粉末模块完整控制面板 (支持3个送料装置)"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Module2 - Powder Control")
+        self.setMinimumWidth(500)
+
+        main_layout = QVBoxLayout(self)
+
+        # 使用 TabWidget 区分3个送料装置
+        self.tabs = QTabWidget()
+        self.feeders = []
+
+        for i in range(1, 4):
+            tab = QWidget()
+            tab_layout = QVBoxLayout(tab)
+
+            group = QGroupBox(f"Feeder {i} Control")
+            form = QFormLayout()
+
+            # 投料重量
+            amount_spin = QDoubleSpinBox()
+            amount_spin.setRange(0.0, 9999.0)
+            amount_spin.setValue(10.0)
+            amount_spin.setSuffix(" g")
+            form.addRow("Target Amount:", amount_spin)
+
+            # 投料按钮
+            btn_dispense = QPushButton("Dispense (投料)")
+            btn_dispense.setMinimumHeight(35)
+            btn_dispense.setStyleSheet("background-color: #28a745; color: white;")
+            form.addRow(btn_dispense)
+
+            # 步数设置
+            steps_spin = QSpinBox()
+            steps_spin.setRange(0, 99999)
+            steps_spin.setValue(1000)
+            btn_set_steps = QPushButton("Set Steps (设置步数)")
+            btn_set_steps.setMinimumHeight(30)
+
+            steps_layout = QHBoxLayout()
+            steps_layout.addWidget(steps_spin)
+            steps_layout.addWidget(btn_set_steps)
+            form.addRow("Feeder Steps:", steps_layout)
+
+            # 归零按钮
+            btn_home = QPushButton("HOME (归零)")
+            btn_home.setMinimumHeight(35)
+            form.addRow(btn_home)
+
+            group.setLayout(form)
+            tab_layout.addWidget(group)
+            tab_layout.addStretch()
+
+            self.tabs.addTab(tab, f"Feeder {i}")
+
+            # 保存组件引用以便后续绑定信号
+            self.feeders.append({
+                'id': i,
+                'amount_spin': amount_spin,
+                'btn_dispense': btn_dispense,
+                'steps_spin': steps_spin,
+                'btn_set_steps': btn_set_steps,
+                'btn_home': btn_home
+            })
+
+        main_layout.addWidget(self.tabs)
+
+        # === 全局控制区 ===
+        global_group = QGroupBox("Global Actions")
+        global_layout = QHBoxLayout()
+
+        self.btn_stop = QPushButton("STOP (急停)")
+        self.btn_stop.setStyleSheet("background-color: #dc3545; color: white;")
+        self.btn_reset = QPushButton("Reset E-Stop (复位)")
+        self.btn_status = QPushButton("Get Status (状态)")
+
+        for btn in (self.btn_stop, self.btn_reset, self.btn_status):
+            btn.setMinimumHeight(40)
+            global_layout.addWidget(btn)
+
+        global_group.setLayout(global_layout)
+        main_layout.addWidget(global_group)
+
+        # === 底部关闭按钮 ===
+        btn_close = QPushButton("Close")
+        btn_close.setMinimumHeight(40)
+        btn_close.setStyleSheet("background-color: #6c757d; margin-top: 10px;")
+        btn_close.clicked.connect(self.accept)
+        main_layout.addWidget(btn_close)

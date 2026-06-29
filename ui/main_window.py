@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
 # 假设你的 dialog 文件路径正确
 from ui.dialog import TemperatureDialog, SystemStatusDialog, SystemSettingsDialog, DebugDialog, StartConfigDialog, \
-    MonomerControlDialog
+    MonomerControlDialog, PowderControlDialog
 
 
 class MainWindow(QMainWindow):
@@ -29,6 +29,14 @@ class MainWindow(QMainWindow):
     request_monomer_config = pyqtSignal()
     request_monomer_set_param = pyqtSignal(str, int)
     request_monomer_deliver_seq = pyqtSignal()
+
+    # PowderModule 控制信号
+    request_dispense_powder = pyqtSignal(int, float)  # device_id, amount
+    request_home_powder = pyqtSignal(int)             # device_id
+    request_set_powder_steps = pyqtSignal(int, int)   # device_id, steps
+    request_stop_powder = pyqtSignal()
+    request_reset_powder = pyqtSignal()
+    request_status_powder = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -224,8 +232,26 @@ class MainWindow(QMainWindow):
                     mono_dialog.param_value_spin.value()))
             mono_dialog.exec()
 
+        def on_module2_clicked():
+            powder_dialog = PowderControlDialog(self)
+            # 动态绑定3个送料装置的按钮信号
+            for feeder in powder_dialog.feeders:
+                feeder['btn_dispense'].clicked.connect(
+                    lambda _, f=feeder: self.request_dispense_powder.emit(f['id'], f['amount_spin'].value()))
+                feeder['btn_home'].clicked.connect(
+                    lambda _, f=feeder: self.request_home_powder.emit(f['id']))
+                feeder['btn_set_steps'].clicked.connect(
+                    lambda _, f=feeder: self.request_set_powder_steps.emit(f['id'], f['steps_spin'].value()))
+
+            # 绑定全局按钮
+            powder_dialog.btn_stop.clicked.connect(self.request_stop_powder.emit)
+            powder_dialog.btn_reset.clicked.connect(self.request_reset_powder.emit)
+            powder_dialog.btn_status.clicked.connect(self.request_status_powder.emit)
+            powder_dialog.exec()
+
         dialog.buttons[1].clicked.connect(on_module1_clicked)
-        for i, name in enumerate(["Module2", "Module3", "Module4", "Module5"], start=2):
+        dialog.buttons[2].clicked.connect(on_module2_clicked)
+        for i, name in enumerate(["Module3", "Module4", "Module5"], start=1):
             dialog.buttons[i].clicked.connect(lambda _, n=name: self.append_log(f"[Config] 进入 {n} 控制界面"))
         dialog.exec()
 

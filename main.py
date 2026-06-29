@@ -23,8 +23,8 @@ def setup_hardware(manager: HardwareManager):
     # 如果某个设备暂时不用，可以直接注释掉对应的字典项
     hardware_config = {
         "temp": {"class": TemperatureDevice, "kwargs": {"port": "COM12"}},
-        "weight_ch1": {"class": WeighingModule, "kwargs": {"port": "COM4"}},
-        "weight_ch2": {"class": WeighingModule, "kwargs": {"port": "COM4"}},
+        # "weight_ch1": {"class": WeighingModule, "kwargs": {"port": "COM4"}},
+        "weight_ch2": {"class": WeighingModule, "kwargs": {"port": "COM20"}},
         "stir": {"class": StirringModule, "kwargs": {"port": "COM17"}},
         "powder": {"class": PowderModule, "kwargs": {"port": "COM10"}},
         "monomer": {"class": MonomerModule, "kwargs": {"port": "COM7"}},
@@ -94,6 +94,20 @@ def main():
     if hasattr(window, 'request_monomer_deliver_seq'):
         window.request_monomer_deliver_seq.connect(hw_manager.deliver_monomer_sequence)
 
+    # powder
+    if hasattr(window, 'request_dispense_powder'):
+        window.request_dispense_powder.connect(hw_manager.dispense_powder)
+    if hasattr(window, 'request_home_powder'):
+        window.request_home_powder.connect(hw_manager.home_powder)
+    if hasattr(window, 'request_set_powder_steps'):
+        window.request_set_powder_steps.connect(hw_manager.set_powder_steps)
+    if hasattr(window, 'request_stop_powder'):
+        window.request_stop_powder.connect(hw_manager.stop_powder)
+    if hasattr(window, 'request_reset_powder'):
+        window.request_reset_powder.connect(hw_manager.reset_powder)
+    if hasattr(window, 'request_status_powder'):
+        window.request_status_powder.connect(hw_manager.status_powder)
+
     # --- 4.2 Manager 数据/状态 -> UI 展示 ---
     if hasattr(window, 'update_temp_display'):
         hw_manager.temp_data.connect(window.update_temp_display)
@@ -101,6 +115,10 @@ def main():
         hw_manager.weight_data.connect(window.update_weight_display)
     if hasattr(window, 'on_device_ready'):
         hw_manager.device_ready.connect(window.on_device_ready)
+    def route_weight_to_powder(channel: str, data: dict):
+        if channel == "weight_ch2":
+            hw_manager.update_powder_weight(data.get('weight', 0.0))
+    hw_manager.weight_data.connect(route_weight_to_powder)
 
     # 统一日志路由：将 Manager 收集到的所有底层日志打印到 UI 的日志区
     if hasattr(window, 'append_log'):

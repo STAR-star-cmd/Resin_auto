@@ -70,15 +70,15 @@ class _PowderWorker(QObject):
         self._running = False
 
     # ─── 命令下发入口（线程安全标记） ───────────────────────
-    def request_dispense(self, amount: float):
+    def request_dispense(self, device_id: int, amount: float):
         self._pending_cmd = "dispense"
-        self._cmd_param = amount
-
-    def request_stop(self):
-        self._pending_cmd = "stop"
+        self._cmd_param = (device_id, amount)
 
     def request_home(self):
         self._pending_cmd = "home"
+
+    def request_stop(self):
+        self._pending_cmd = "stop"
 
     def request_reset(self):
         self._pending_cmd = "reset"
@@ -115,9 +115,13 @@ class _PowderWorker(QObject):
                 break
         return lines
 
-    def _execute_dispense(self, amount: float):
+    def _execute_dispense(self, params):
         try:
-            self._send_line(f"DELIVER {amount}")
+            if isinstance(params, tuple):
+                device_id, amount = params
+                self._send_line(f"DELIVER {device_id} {amount}")
+            else:
+                self._send_line(f"DELIVER {params}")
             # 闭环控制耗时较长，超时设为 300 秒
             deadline = time.time() + 300.0
             completed = False
