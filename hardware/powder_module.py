@@ -1,152 +1,287 @@
 import serial
-from PyQt6.QtCore import QObject, pyqtSignal, QThread, pyqtSlot, QTimer
+import time
+from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
 
 class _PowderWorker(QObject):
-    """
-    后台工作线程 (内部类)
-    负责串口通信、下粉执行与状态轮询，彻底隔离 I/O 阻塞
-    """
-    # 状态与结果信号 (桥接给外层)
-    status_updated = pyqtSignal(dict)
+    """粉末模块后台工作线程，负责串口通信"""
+    # 【对齐 monomer_module】统一使用这三个标准信号
+    action_finished = pyqtSignal(bool, str)
     error_occurred = pyqtSignal(str)
-    dispense_finished = pyqtSignal(bool)
+    response_received = pyqtSignal(str)
 
-    # 内部控制信号 (主线程 -> 后台线程)
-    _request_dispense = pyqtSignal(float)
-    _request_stop = pyqtSignal()
-    _request_shutdown = pyqtSignal()
-
-    def __init__(self, port, baudrate, poll_interval_ms=500):
+    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 1.0):
         super().__init__()
         self.port = port
         self.baudrate = baudrate
+        self.timeout = timeout
         self.ser = None
-        self._keep_alive = True
-
-        # 自治定时器：用于周期性查询设备状态（如剩余粉量、运行状态等）
-        self.timer = QTimer(self)
-        self.timer.setInterval(poll_interval_ms)
-        self.timer.timeout.connect(self._poll_status)
-
-        # 绑定控制信号到槽函数
-        self._request_dispense.connect(self._execute_dispense)
-        self._request_stop.connect(self._execute_stop)
-        self._request_shutdown.connect(self._on_shutdown)
+        self._running = False
+        self._pending_cmd = None
+        self._cmd_param = None
 
     @pyqtSlot()
-    def init_and_run(self):
-        """线程启动时执行：连接串口并启动状态轮询"""
+    def run(self):
         try:
-            self.ser = serial.Serial(self.port, self.baudrate, timeout=1)
-            self.timer.start()
+            self.ser = serial.Serial(
+                port=self.port,
+                baudrate=self.baudrate,
+                timeout=self.timeout
+            )
+            self._running = True
+            time.sleep(0.1)
+            self.ser.reset_input_buffer()
         except Exception as e:
-            self.error_occurred.emit(f"粉末模块({self.port})连接失败: {e}")
-
-    @pyqtSlot()
-    def _poll_status(self):
-        """周期性状态查询 (非阻塞)"""
-        if not self.ser or not self.ser.is_open: return
-        try:
-            # 🔧 替换为你的原始状态查询协议
-            # 例如: self.ser.write(b"STATUS\n")
-            # resp = self.ser.readline().decode('utf-8', errors='ignore').strip()
-            # self.status_updated.emit({"raw_status": resp, "online": True})
-            pass
-        except Exception as e:
-            self.error_occurred.emit(f"状态轮询异常: {e}")
-
-    @pyqtSlot(float)
-    def _execute_dispense(self, amount):
-        """执行下粉指令 (异步)"""
-        if not self.ser or not self.ser.is_open:
-            self.error_occurred.emit("下粉失败：串口未打开")
-            self.dispense_finished.emit(False)
+            self.error_occurred.emit(f"串口打开失败: {e}")
+            self.action_finished.emit(False, str(e))
             return
 
-        try:
-            # 🔧 替换为你的原始下粉协议
-            # 例如: cmd = f"POWDER {amount}\n"
-            # self.ser.write(cmd.encode('utf-8'))
+        while self._running:
+            if self._pending_cmd is not None:
+                cmd = self._pending_cmd
+                param = self._cmd_param
+                self._pending_cmd = None
+                self._cmd_param = None
 
-            # 如果设备会返回 ACK，可在此处 readline() 解析；
-            # 若为开环控制，直接发射完成信号即可：
-            self.dispense_finished.emit(True)
-        except Exception as e:
-            self.error_occurred.emit(f"下粉指令发送失败: {e}")
-            self.dispense_finished.emit(False)
-
-    @pyqtSlot()
-    def _execute_stop(self):
-        """紧急停止下粉"""
-        if self.ser and self.ser.is_open:
-            try:
-                # 🔧 替换为你的原始停止协议
-                # self.ser.write(b"STOP\n")
+                if cmd == "dispense":
+                    self._execute_dispense(param)
+                elif cmd == "stop":
+                    self._execute_stop()
+                elif cmd == "home":
+                    self._execute_home()
+                elif cmd == "reset":
+                    self._execute_reset()
+                elif cmd == "set_steps":
+                    self._execute_set_steps(param)
+                elif cmd == "weight_update":
+                    self._execute_weight_update(param)
+                elif cmd == "status":
+                    self._poll_status()
+            else:
+                # 【关键修改】空闲时不再自动轮询 STATUS，防止与高频透传的 W: 指令抢占串口
                 pass
-            except Exception as e:
-                self.error_occurred.emit(f"停止指令失败: {e}")
 
-    @pyqtSlot()
-    def _on_shutdown(self):
-        """安全关闭串口并退出线程事件循环"""
-        self._keep_alive = False
-        self.timer.stop()
+            time.sleep(0.05)
+
         if self.ser and self.ser.is_open:
             self.ser.close()
-        QThread.currentThread().quit()
+
+    def stop(self):
+        self._running = False
+
+    # ─── 命令下发入口（线程安全标记） ───────────────────────
+    def request_dispense(self, amount: float):
+        self._pending_cmd = "dispense"
+        self._cmd_param = amount
+
+    def request_stop(self):
+        self._pending_cmd = "stop"
+
+    def request_home(self):
+        self._pending_cmd = "home"
+
+    def request_reset(self):
+        self._pending_cmd = "reset"
+
+    def request_set_steps(self, steps_config: dict):
+        self._pending_cmd = "set_steps"
+        self._cmd_param = steps_config
+
+    def request_weight_update(self, weight: float):
+        self._pending_cmd = "weight_update"
+        self._cmd_param = weight
+
+    def request_status(self):
+        self._pending_cmd = "status"
+
+    # ─── 指令执行实现 ──────────────────────────────────────
+    def _send_line(self, line: str):
+        if self.ser and self.ser.is_open:
+            self.ser.write((line + "\n").encode("ascii"))
+            self.ser.flush()
+
+    def _read_lines_until_empty(self, max_wait: float = 2.0) -> list:
+        lines = []
+        deadline = time.time() + max_wait
+        while time.time() < deadline:
+            raw = self.ser.readline()
+            if raw:
+                decoded = raw.decode("ascii", errors="ignore").strip()
+                if decoded:
+                    lines.append(decoded)
+                else:
+                    break
+            else:
+                break
+        return lines
+
+    def _execute_dispense(self, amount: float):
+        try:
+            self._send_line(f"DELIVER {amount}")
+            # 闭环控制耗时较长，超时设为 300 秒
+            deadline = time.time() + 300.0
+            completed = False
+            while time.time() < deadline and self._running:
+                raw = self.ser.readline()
+                if raw:
+                    line = raw.decode("ascii", errors="ignore").strip()
+                    if "DELIVERY COMPLETE" in line:
+                        completed = True
+                        break
+                    elif "ERROR" in line or "BUSY" in line:
+                        self.error_occurred.emit(f"下粉异常: {line}")
+                        self.action_finished.emit(False, line)
+                        return
+                time.sleep(0.02)
+
+            if not completed:
+                self.error_occurred.emit("下粉超时，未收到完成反馈")
+                self.action_finished.emit(False, "超时")
+            else:
+                self.action_finished.emit(True, "下粉完成")
+        except Exception as e:
+            self.error_occurred.emit(f"下粉指令异常: {e}")
+            self.action_finished.emit(False, str(e))
+
+    def _execute_weight_update(self, weight: float):
+        try:
+            self._send_line(f"W:{weight:.2f}")
+        except Exception:
+            pass
+
+    def _execute_stop(self):
+        try:
+            self._send_line("S")
+            self.action_finished.emit(True, "已发送停止指令")
+        except Exception as e:
+            self.error_occurred.emit(f"停止指令异常: {e}")
+            self.action_finished.emit(False, str(e))
+
+    def _execute_home(self):
+        try:
+            self._send_line("HOME")
+            deadline = time.time() + 30.0
+            success = False
+            while time.time() < deadline and self._running:
+                raw = self.ser.readline()
+                if raw:
+                    line = raw.decode("ascii", errors="ignore").strip()
+                    # 匹配 Arduino 回零成功的日志 (去除了原版多余的空格)
+                    if "HOMED & Zeroed" in line or "HOME OK" in line:
+                        success = True
+                        break
+                    elif "ERROR" in line:
+                        self.error_occurred.emit(f"回零异常: {line}")
+                        self.action_finished.emit(False, line)
+                        return
+                time.sleep(0.02)
+            self.action_finished.emit(success, "回零完成" if success else "回零超时")
+        except Exception as e:
+            self.error_occurred.emit(f"回零指令异常: {e}")
+            self.action_finished.emit(False, str(e))
+
+    def _execute_reset(self):
+        try:
+            self._send_line("R")
+            time.sleep(0.2)
+            self.action_finished.emit(True, "复位成功")
+        except Exception as e:
+            self.error_occurred.emit(f"复位指令异常: {e}")
+            self.action_finished.emit(False, str(e))
+
+    def _execute_set_steps(self, steps_config: dict):
+        try:
+            for key, value in steps_config.items():
+                self._send_line(f"{key}={value}")
+                time.sleep(0.05)
+            self.action_finished.emit(True, "步数配置完成")
+        except Exception as e:
+            self.error_occurred.emit(f"步数配置异常: {e}")
+            self.action_finished.emit(False, str(e))
+
+    def _poll_status(self):
+        try:
+            self._send_line("STATUS")
+            lines = self._read_lines_until_empty(max_wait=0.5)
+            if lines:
+                resp = "\n".join(lines)
+                self.response_received.emit(resp)
+                self.action_finished.emit(True, resp)
+        except Exception as e:
+            self.error_occurred.emit(f"状态轮询异常: {e}")
 
 
 class PowderModule(QObject):
     """
-    粉末下料模块 (对外暴露的管理接口)
+    粉末制备模块对外接口
+    【已对齐 monomer_module 规范】，可被 manager 无缝统一管理
     """
-    # 暴露给 Manager/UI 的信号
-    status_updated = pyqtSignal(dict)
+    # 对齐 monomer_module 的标准信号
+    action_finished = pyqtSignal(bool, str)
     error_occurred = pyqtSignal(str)
+    response_received = pyqtSignal(str)
+
+    # 兼容 comm_manager 中旧版的 powder 信号绑定
     dispense_finished = pyqtSignal(bool)
 
-    def __init__(self, port: str, baudrate: int = 9600, poll_interval_ms: int = 500):
-        super().__init__()
-        self.port = port
-
-        # 1. 创建独立线程
+    def __init__(self, port: str, baudrate: int = 115200, parent=None):
+        super().__init__(parent)
         self._thread = QThread()
-
-        # 2. 实例化 Worker 并移入独立线程
-        self._worker = _PowderWorker(port, baudrate, poll_interval_ms)
+        self._worker = _PowderWorker(port=port, baudrate=baudrate)
         self._worker.moveToThread(self._thread)
 
-        # 3. 生命周期绑定
-        self._thread.started.connect(self._worker.init_and_run)
-        self._worker.destroyed.connect(self._thread.quit)
-        self._thread.finished.connect(self._thread.deleteLater)
-
-        # 4. 桥接内部信号到外部信号
-        self._worker.status_updated.connect(self.status_updated)
+        # 转发 Worker 信号
+        self._worker.action_finished.connect(self.action_finished)
         self._worker.error_occurred.connect(self.error_occurred)
-        self._worker.dispense_finished.connect(self.dispense_finished)
+        self._worker.response_received.connect(self.response_received)
 
-    # === 对外暴露的控制接口 ===
+        # 桥接 action_finished 到 dispense_finished 以兼容 Manager 旧逻辑
+        self._worker.action_finished.connect(
+            lambda ok, msg: self.dispense_finished.emit(ok) if "下粉" in msg else None
+        )
 
+        self._thread.started.connect(self._worker.run)
+        self._thread.finished.connect(self._worker.deleteLater)
+
+    # ==================== 生命周期管理 (对齐 Manager 的 start_all/stop_all) ====================
     def start(self):
-        """供 Manager 调用的启动方法"""
+        """启动后台线程与串口 (Manager 统一调用 start_all)"""
         if not self._thread.isRunning():
             self._thread.start()
 
     def stop(self):
-        """供 Manager 调用的停止方法"""
-        if self._thread.isRunning():
-            self._worker._request_shutdown.emit()
-            self._thread.wait(2000)  # 等待安全退出
+        """停止后台线程并安全退出 (Manager 统一调用 stop_all)"""
+        self._worker.stop()
+        self._thread.quit()
+        self._thread.wait(3000)
 
-    def dispense(self, amount: float):
-        """
-        触发下粉 (异步)
-        原代码中的 time.sleep() 等待逻辑已移除，改为监听 dispense_finished 信号
-        """
-        self._worker._request_dispense.emit(amount)
+    # ==================== 原有业务接口 (保留) ====================
+    def dispense(self, amount: float = 0.0):
+        """触发下粉序列，amount > 0 时开启重量闭环控制"""
+        self._worker.request_dispense(amount)
 
-    def stop_dispense(self):
+    def emergency_stop(self):
         """紧急停止"""
-        self._worker._request_stop.emit()
+        self._worker.request_stop()
+
+    def home(self):
+        """主电机回零"""
+        self._worker.request_home()
+
+    def reset_estop(self):
+        """复位急停标志"""
+        self._worker.request_reset()
+
+    def set_feeder_steps(self, steps_config: dict):
+        """设置送料器步数"""
+        self._worker.request_set_steps(steps_config)
+
+    # ==================== 新增：重量闭环透传接口 ====================
+    def update_weight(self, weight: float):
+        """将实时重量同步给下位机 (由 weight_module 绑定调用)"""
+        self._worker.request_weight_update(weight)
+
+    # ==================== 新增：状态查询 (对齐 monomer_module) ====================
+    def get_status(self):
+        """查询电机状态（结果通过 response_received 信号异步返回）"""
+        self._worker.request_status()

@@ -22,10 +22,11 @@ def setup_hardware(manager: HardwareManager):
     # 🔧 请根据实际硬件连接的 COM 口号修改这里的 port 值
     # 如果某个设备暂时不用，可以直接注释掉对应的字典项
     hardware_config = {
-        "temp": {"class": TemperatureDevice, "kwargs": {"port": "COM3"}},
-        "weight": {"class": WeighingModule, "kwargs": {"port": "COM4"}},
-        "stir": {"class": StirringModule, "kwargs": {"port": "COM5"}},
-        "powder": {"class": PowderModule, "kwargs": {"port": "COM6"}},
+        "temp": {"class": TemperatureDevice, "kwargs": {"port": "COM12"}},
+        "weight_ch1": {"class": WeighingModule, "kwargs": {"port": "COM4"}},
+        "weight_ch2": {"class": WeighingModule, "kwargs": {"port": "COM4"}},
+        "stir": {"class": StirringModule, "kwargs": {"port": "COM17"}},
+        "powder": {"class": PowderModule, "kwargs": {"port": "COM10"}},
         "monomer": {"class": MonomerModule, "kwargs": {"port": "COM7"}},
     }
 
@@ -72,10 +73,26 @@ def main():
         window.request_stir_u.connect(hw_manager.stir_u)
     if hasattr(window, 'request_dispense_powder'):
         window.request_dispense_powder.connect(hw_manager.dispense_powder)
+
+    # monomer
     if hasattr(window, 'request_deliver_monomer'):
         window.request_deliver_monomer.connect(hw_manager.deliver_monomer)
     if hasattr(window, 'request_retract_monomer'):
         window.request_retract_monomer.connect(hw_manager.retract_monomer)
+    if hasattr(window, 'request_monomer_stop'):
+        window.request_monomer_stop.connect(hw_manager.stop_monomer)
+    if hasattr(window, 'request_monomer_home'):
+        window.request_monomer_home.connect(hw_manager.home_monomer)
+    if hasattr(window, 'request_monomer_test'):
+        window.request_monomer_test.connect(hw_manager.test_monomer)
+    if hasattr(window, 'request_monomer_status'):
+        window.request_monomer_status.connect(hw_manager.get_monomer_status)
+    if hasattr(window, 'request_monomer_config'):
+        window.request_monomer_config.connect(hw_manager.get_monomer_config)
+    if hasattr(window, 'request_monomer_set_param'):
+        window.request_monomer_set_param.connect(hw_manager.set_monomer_param)
+    if hasattr(window, 'request_monomer_deliver_seq'):
+        window.request_monomer_deliver_seq.connect(hw_manager.deliver_monomer_sequence)
 
     # --- 4.2 Manager 数据/状态 -> UI 展示 ---
     if hasattr(window, 'update_temp_display'):
@@ -94,9 +111,8 @@ def main():
     logging.info("[Main] UI 加载完成，正在启动所有硬件后台线程...")
     hw_manager.start_all()
 
-    # 6. 优雅退出处理 (关键！)
+    # 6. 退出处理
     # 拦截程序退出信号，确保所有 QThread 被安全销毁，串口被正确 close()
-    # 这能彻底解决“关闭程序后再次启动提示串口被占用”的痛点
     def on_exit():
         logging.info("[Main] 正在关闭程序，安全释放硬件资源...")
         hw_manager.stop_all()

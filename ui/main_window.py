@@ -7,16 +7,28 @@ from PyQt6.QtWidgets import (
     QGridLayout, QGroupBox, QLabel, QPushButton, QPlainTextEdit, QMessageBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
-from ui.dialog import TemperatureDialog, SystemStatusDialog, SystemSettingsDialog, DebugDialog, StartConfigDialog
+# 假设你的 dialog 文件路径正确
+from ui.dialog import TemperatureDialog, SystemStatusDialog, SystemSettingsDialog, DebugDialog, StartConfigDialog, \
+    MonomerControlDialog
 
 
-# ================= 主窗口 =================
 class MainWindow(QMainWindow):
     # --- 发往 Manager 的请求信号 (意图) ---
-    request_set_temp = pyqtSignal(int, float)  # 修复：增加 channel 参数 (int, float)
+    request_set_temp = pyqtSignal(int, float)
     request_start_process = pyqtSignal()
-    request_stop_process = pyqtSignal()  # 新增：停止信号
-    request_tare = pyqtSignal()  # 新增：清零信号
+    request_stop_process = pyqtSignal()
+    request_tare = pyqtSignal(int)  # 建议：清零信号最好带上通道号，否则不知道清哪个
+
+    # MonomerModule 控制信号
+    request_deliver_monomer = pyqtSignal(float)
+    request_retract_monomer = pyqtSignal(float)
+    request_monomer_stop = pyqtSignal()
+    request_monomer_home = pyqtSignal()
+    request_monomer_test = pyqtSignal()
+    request_monomer_status = pyqtSignal()
+    request_monomer_config = pyqtSignal()
+    request_monomer_set_param = pyqtSignal(str, int)
+    request_monomer_deliver_seq = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -33,7 +45,7 @@ class MainWindow(QMainWindow):
         top_layout = QHBoxLayout()
         top_layout.setSpacing(15)
 
-        # 1. Temperature Module
+        # 1. Temperature Module (保持不变)
         temp_group = QGroupBox("Temperature Monitor")
         temp_layout = QGridLayout()
         temp_layout.setHorizontalSpacing(15)
@@ -56,7 +68,6 @@ class MainWindow(QMainWindow):
             set_temp = QLabel("25.0")
             set_temp.setAlignment(Qt.AlignmentFlag.AlignCenter)
             btn = QPushButton("Modify")
-            # 修复：使用 default argument 捕获循环变量 i
             btn.clicked.connect(lambda _, ch=f"CH {i}": self.open_temp_dialog(ch))
 
             temp_layout.addWidget(ch_label, i, 0)
@@ -69,38 +80,42 @@ class MainWindow(QMainWindow):
 
         temp_group.setLayout(temp_layout)
 
-        # 2. Weight Module
-        weight_group = QGroupBox("Weight Monitor")
-        weight_layout = QGridLayout()
-        weight_layout.setHorizontalSpacing(15)
-        weight_layout.setVerticalSpacing(10)
-
-        w_headers = ["Channel", "Real-time (g)", "Action"]
-        for col, text in enumerate(w_headers):
-            label = QLabel(f" {text}")
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            weight_layout.addWidget(label, 0, col)
+        # 2. Weight Module (★ 核心修改区域 ★)
+        # 创建一个容器来放置两个独立的称重框
+        weight_container = QWidget()
+        weight_container_layout = QVBoxLayout(weight_container)
+        weight_container_layout.setContentsMargins(0, 0, 0, 0)
+        weight_container_layout.setSpacing(10)
 
         self.weight_realtime_labels = []
+
         for i in range(1, 3):
-            ch_label = QLabel(f"CH {i}")
-            ch_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            real_time = QLabel("--.-")
+            # 为每个通道创建独立的 GroupBox
+            w_group = QGroupBox(f"Weight Source CH {i}")
+            w_layout = QHBoxLayout()  # 单个通道内部使用水平布局更紧凑
+            w_layout.setContentsMargins(10, 15, 10, 10)
+            w_layout.setSpacing(10)
+
+            real_time = QLabel("--.- g")
             real_time.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            real_time.setStyleSheet("font-size: 16px; font-weight: bold; color: #333;")
 
             btn_tare = QPushButton("Tare / Zero")
-            # 修复：绑定清零信号
-            btn_tare.clicked.connect(self.request_tare.emit)
+            btn_tare.setMinimumWidth(100)
+            # 修复：绑定清零信号时传入通道索引 i-1
+            btn_tare.clicked.connect(lambda _, idx=i - 1: self.request_tare.emit(idx))
 
-            weight_layout.addWidget(ch_label, i, 0)
-            weight_layout.addWidget(real_time, i, 1)
-            weight_layout.addWidget(btn_tare, i, 2)
+            w_layout.addWidget(QLabel("Real-time:"), 0, Qt.AlignmentFlag.AlignRight)
+            w_layout.addWidget(real_time, 1)
+            w_layout.addWidget(btn_tare, 0, Qt.AlignmentFlag.AlignRight)
 
+            w_group.setLayout(w_layout)
+
+            # 将子 GroupBox 加入容器布局
+            weight_container_layout.addWidget(w_group)
             self.weight_realtime_labels.append(real_time)
 
-        weight_group.setLayout(weight_layout)
-
-        # 3. Plot Module
+        # 3. Plot Module (保持不变)
         plot_group = QGroupBox("Mechanical Curve")
         plot_layout = QVBoxLayout()
 
@@ -114,8 +129,9 @@ class MainWindow(QMainWindow):
         plot_layout.addWidget(self.plot_widget)
         plot_group.setLayout(plot_layout)
 
+        # 注意：这里把原来的 weight_group 替换成了 weight_container
         top_layout.addWidget(temp_group, stretch=1)
-        top_layout.addWidget(weight_group, stretch=1)
+        top_layout.addWidget(weight_container, stretch=1)
         top_layout.addWidget(plot_group, stretch=2)
         main_layout.addLayout(top_layout, stretch=3)
 
@@ -123,7 +139,6 @@ class MainWindow(QMainWindow):
         bottom_layout = QHBoxLayout()
         bottom_layout.setSpacing(15)
 
-        # 1. Text Display
         log_group = QGroupBox("System Log")
         log_layout = QVBoxLayout()
         self.log_text = QPlainTextEdit()
@@ -132,7 +147,6 @@ class MainWindow(QMainWindow):
         log_group.setLayout(log_layout)
         bottom_layout.addWidget(log_group, stretch=3)
 
-        # 2. Control Buttons
         control_group = QGroupBox("System Controls")
         control_layout = QVBoxLayout()
         control_layout.setSpacing(15)
@@ -146,14 +160,12 @@ class MainWindow(QMainWindow):
         for btn in (self.btn_start, self.btn_stop, self.btn_settings, self.btn_status, self.btn_debug):
             btn.setMinimumHeight(45)
 
-        # 修复：绑定控制按钮的信号
         self.btn_start.clicked.connect(self.open_start_config_dialog)
         self.btn_stop.clicked.connect(self.request_stop_process.emit)
         self.btn_settings.clicked.connect(self.open_settings_dialog)
         self.btn_status.clicked.connect(self.open_status_dialog)
         self.btn_debug.clicked.connect(self.open_debug_dialog)
 
-        # 布局排列
         control_layout.addWidget(self.btn_start)
         control_layout.addWidget(self.btn_stop)
         control_layout.addWidget(self.btn_settings)
@@ -174,8 +186,6 @@ class MainWindow(QMainWindow):
             ch_idx = int(channel.split()[-1]) - 1
             self.temp_set_labels[ch_idx].setText(f"{val:.1f}")
             self.append_log(f"Set temperature for {channel} to {val} °C")
-
-            # 修复：真正将意图发射给 Manager！
             self.request_set_temp.emit(ch_idx, val)
 
     def open_settings_dialog(self):
@@ -194,49 +204,63 @@ class MainWindow(QMainWindow):
     def open_start_config_dialog(self):
         dialog = StartConfigDialog(self)
         dialog.buttons[0].clicked.connect(lambda: (self.request_start_process.emit(), dialog.accept()))
-        for i, name in enumerate(["Module1", "Module2", "Module3", "Module4", "Module15"], start=1):
-            dialog.buttons[i].clicked.connect(lambda _, n=name: self.append_log(f"[Config] 进入 {n} 控制界面"))
 
+        def on_module1_clicked():
+            mono_dialog = MonomerControlDialog(self)
+            # 绑定所有按钮到对应信号
+            mono_dialog.btn_deliver.clicked.connect(
+                lambda: self.request_deliver_monomer.emit(mono_dialog.amount_spin.value()))
+            mono_dialog.btn_retract.clicked.connect(
+                lambda: self.request_retract_monomer.emit(mono_dialog.amount_spin.value()))
+            mono_dialog.btn_stop.clicked.connect(self.request_monomer_stop.emit)
+            mono_dialog.btn_home.clicked.connect(self.request_monomer_home.emit)
+            mono_dialog.btn_test.clicked.connect(self.request_monomer_test.emit)
+            mono_dialog.btn_deliver_seq.clicked.connect(self.request_monomer_deliver_seq.emit)
+            mono_dialog.btn_status.clicked.connect(self.request_monomer_status.emit)
+            mono_dialog.btn_config.clicked.connect(self.request_monomer_config.emit)
+            mono_dialog.btn_set_param.clicked.connect(
+                lambda: self.request_monomer_set_param.emit(
+                    mono_dialog.param_key_combo.currentText(),
+                    mono_dialog.param_value_spin.value()))
+            mono_dialog.exec()
+
+        dialog.buttons[1].clicked.connect(on_module1_clicked)
+        for i, name in enumerate(["Module2", "Module3", "Module4", "Module5"], start=2):
+            dialog.buttons[i].clicked.connect(lambda _, n=name: self.append_log(f"[Config] 进入 {n} 控制界面"))
         dialog.exec()
 
-    # 修复：增加 @pyqtSlot 确保跨线程更新 UI 的安全
     @pyqtSlot(str)
     def append_log(self, message):
         time_str = datetime.now().strftime("%H:%M:%S")
         self.log_text.appendPlainText(f"[{time_str}] {message}")
 
     # ================= 接收来自 Manager 的数据更新槽 =================
-
     @pyqtSlot(dict)
     def update_temp_display(self, data: dict):
-        """接收 Manager 发来的温度字典，如 {'CH1': 25.0, 'CH2': 26.5}"""
         for i in range(4):
             ch_key = f"CH{i + 1}"
             if ch_key in data:
                 self.temp_realtime_labels[i].setText(f"{data[ch_key]:.1f}")
 
-    @pyqtSlot(dict)
-    def update_weight_display(self, data: dict):
-        """接收 Manager 发来的重量字典，如 {'CH1': 10.5, 'CH2': 12.0}"""
-        for i in range(2):
-            ch_key = f"CH{i + 1}"
-            if ch_key in data:
-                self.weight_realtime_labels[i].setText(f"{data[ch_key]:.2f}")
+    @pyqtSlot(str, dict)
+    def update_weight_display(self, channel: str, data: dict):
+        """接收 Manager 发来的重量字典"""
+        ch_idx = int(channel.split("_ch")[-1]) - 1
+        if 0 <= ch_idx < len(self.weight_realtime_labels):
+            self.weight_realtime_labels[ch_idx].setText(f"{data['weight']:.2f} g")
 
     @pyqtSlot(str)
     def show_error_message(self, msg: str):
-        """硬件层发生错误时，由 Manager 调用此槽弹窗"""
         QMessageBox.critical(self, "硬件错误", msg)
 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-
     app.setStyleSheet("""
         QGroupBox { font-weight: bold; border: 1px solid #cccccc; border-radius: 6px; margin-top: 12px; font-size: 14px; }
         QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px 0 5px; }
         QLabel { font-size: 13px; }
-        QPushButton { background-color: #0078D7; color: white; border: none; border-radius: 4px; font-size: 13px; }
+        QPushButton { background-color: #0078D7; color: white; border: none; border-radius: 4px; font-size: 13px; padding: 5px 15px;}
         QPushButton:hover { background-color: #005A9E; }
         QPushButton:pressed { background-color: #004578; }
     """)
@@ -244,5 +268,4 @@ if __name__ == "__main__":
     window = MainWindow()
     window.show()
     window.append_log("系统初始化完成。UI 框架已就绪。")
-
     sys.exit(app.exec())

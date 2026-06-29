@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QLabel, QPushButton,
-    QDialog, QSpinBox, QDoubleSpinBox, QDialogButtonBox, QFormLayout, QScrollArea, QTabWidget)
+    QDialog, QSpinBox, QDoubleSpinBox, QDialogButtonBox, QFormLayout, QScrollArea, QTabWidget, QHBoxLayout, QComboBox)
 from PyQt6.QtCore import Qt
 
 # ================= 温度设置对话框 =================
@@ -248,3 +248,87 @@ class StartConfigDialog(QDialog):
         btn_close.setStyleSheet("background-color: #6c757d; margin-top: 10px;")
         btn_close.clicked.connect(self.reject)
         layout.addWidget(btn_close)
+
+
+class MonomerControlDialog(QDialog):
+    """Module1 专用：单体模块完整控制面板"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Module1 - Monomer Control")
+        self.setMinimumWidth(400)
+
+        main_layout = QVBoxLayout(self)
+
+        # === 基础动作区 ===
+        action_group = QGroupBox("Basic Actions")
+        action_layout = QFormLayout()
+
+        self.amount_spin = QDoubleSpinBox()
+        self.amount_spin.setRange(0.0, 9999.0)
+        self.amount_spin.setValue(10.0)
+        self.amount_spin.setSuffix(" steps")
+        action_layout.addRow("Amount:", self.amount_spin)
+
+        btn_layout = QHBoxLayout()
+        self.btn_deliver = QPushButton("Deliver (输送)")
+        self.btn_retract = QPushButton("Retract (回抽)")
+        self.btn_stop = QPushButton("STOP (急停)")
+        self.btn_stop.setStyleSheet("background-color: #dc3545; color: white;")
+        for btn in (self.btn_deliver, self.btn_retract, self.btn_stop):
+            btn.setMinimumHeight(35)
+            btn_layout.addWidget(btn)
+        action_layout.addRow(btn_layout)
+
+        btn_extra_layout = QHBoxLayout()
+        self.btn_home = QPushButton("HOME (归零)")
+        self.btn_test = QPushButton("TEST (测试电机)")
+        self.btn_deliver_seq = QPushButton("DELIVER Sequence")
+        for btn in (self.btn_home, self.btn_test, self.btn_deliver_seq):
+            btn.setMinimumHeight(35)
+            btn_extra_layout.addWidget(btn)
+        action_layout.addRow(btn_extra_layout)
+
+        action_group.setLayout(action_layout)
+        main_layout.addWidget(action_group)
+
+        # === 参数设置区 ===
+        param_group = QGroupBox("Parameter Setting")
+        param_layout = QFormLayout()
+
+        self.param_key_combo = QComboBox()
+        self.param_key_combo.addItems([
+            "EXT0", "EXT1", "EXT2", "EXT3",
+            "RET0", "RET1", "RET2", "RET3",
+            "PUMP1", "PUMP2",
+            "POS0", "POS1", "POS2", "POS3"
+        ])
+        self.param_value_spin = QSpinBox()
+        self.param_value_spin.setRange(-99999, 99999)
+        self.btn_set_param = QPushButton("SET Param")
+        self.btn_set_param.setMinimumHeight(35)
+
+        param_row = QHBoxLayout()
+        param_row.addWidget(self.param_key_combo)
+        param_row.addWidget(self.param_value_spin)
+        param_row.addWidget(self.btn_set_param)
+        param_layout.addRow("Key / Value:", param_row)
+
+        param_group.setLayout(param_layout)
+        main_layout.addWidget(param_group)
+
+        # === 查询区 ===
+        query_layout = QHBoxLayout()
+        self.btn_status = QPushButton("Get STATUS")
+        self.btn_config = QPushButton("Get CONFIG")
+        for btn in (self.btn_status, self.btn_config):
+            btn.setMinimumHeight(35)
+            query_layout.addWidget(btn)
+        main_layout.addLayout(query_layout)
+
+        # === 底部关闭按钮 ===
+        btn_close = QPushButton("Close")
+        btn_close.setMinimumHeight(40)
+        btn_close.setStyleSheet("background-color: #6c757d; margin-top: 10px;")
+        btn_close.clicked.connect(self.accept)
+        main_layout.addWidget(btn_close)

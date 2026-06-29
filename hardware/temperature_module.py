@@ -15,6 +15,7 @@ class _TempWorker(QObject):
     # 内部控制信号 (主线程 -> 后台线程)
     _request_set_temp = pyqtSignal(int, float)
     _request_stop = pyqtSignal()
+    _request_set_switch = pyqtSignal(int, bool)
 
     def __init__(self, port, slave_id, poll_interval):
         super().__init__()
@@ -34,6 +35,7 @@ class _TempWorker(QObject):
         # 绑定控制信号到槽函数
         self._request_set_temp.connect(self._execute_set_temp)
         self._request_stop.connect(self._on_stop)
+        self._request_set_switch.connect(self._execute_set_switch)
 
     def start_polling(self):
         """线程启动时调用"""
@@ -68,6 +70,21 @@ class _TempWorker(QObject):
                 self.command_executed.emit(False, f"写入失败: {result}")
         except Exception as e:
             self.command_executed.emit(False, f"写入异常: {e}")
+
+    def _execute_set_switch(self, channel, state):
+        """ 执行加热输出开关控制 """
+        try:
+            bit_addr = 255 + channel
+            result = self.client.write_coil(
+                address=bit_addr, value=state, slave=self.slave_id
+            )
+            if not result.isError():
+                status = "ON" if state else "OFF"
+                self.command_executed.emit(True, f"CH{channel} 控制开关: {status}")
+            else:
+                self.command_executed.emit(False, f"CH{channel} 开关写入失败: {result}")
+        except Exception as e:
+            self.command_executed.emit(False, f"CH{channel} 开关写入异常: {e}")
 
     def _on_stop(self):
         """安全停止轮询并关闭串口"""

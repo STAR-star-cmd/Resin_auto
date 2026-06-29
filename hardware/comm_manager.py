@@ -11,7 +11,7 @@ class HardwareManager(QObject):
     # === 暴露给 UI 的聚合信号 ===
     log_message = pyqtSignal(str)  # 统一日志流 (包含错误、状态、动作反馈)
     temp_data = pyqtSignal(dict)  # 聚合后的温度数据 {"CH1": 25.0, ...}
-    weight_data = pyqtSignal(dict)  # 聚合后的重量数据 {"weight": 10.5, "stable": True}
+    weight_data = pyqtSignal(str, dict)  # 聚合后的重量数据 (channel_name, data)，如 ("weight_ch1", {...})
     device_ready = pyqtSignal(str)  # 设备就绪信号 (携带设备名称)
 
     def __init__(self):
@@ -39,7 +39,9 @@ class HardwareManager(QObject):
             )
 
         elif name.startswith("weight"):
-            device_instance.data_updated.connect(self.weight_data.emit)
+            device_instance.data_updated.connect(
+                lambda data, n=name: self.weight_data.emit(n, data)
+            )
             device_instance.tare_result.connect(
                 lambda ok, n=name: self.log_message.emit(f"[{n}] 清零{'成功' if ok else '失败'}")
             )
@@ -48,8 +50,8 @@ class HardwareManager(QObject):
             device_instance.device_ready.connect(lambda n=name: self.device_ready.emit(n))
 
         elif name.startswith("powder"):
-            device_instance.dispense_finished.connect(
-                lambda ok, n=name: self.log_message.emit(f"[{n}] 下粉{'完成' if ok else '失败'}")
+            device_instance.action_finished.connect(
+                lambda ok, msg, n=name: self.log_message.emit(f"[{n}] {msg}")
             )
 
         elif name.startswith("monomer"):
@@ -81,9 +83,12 @@ class HardwareManager(QObject):
         dev = self._get_device("temp")
         if dev: dev.set_target_temp(channel, value)
 
-    def tare_weight(self):
-        dev = self._get_device("weight")
-        if dev: dev.tare()
+    def tare_weight(self, channel: int):
+        """channel: 0=ch1, 1=ch2"""
+        dev_name = f"weight_ch{channel + 1}"
+        dev = self.devices.get(dev_name)
+        if dev:
+            dev.tare()
 
     def stir_x(self, speed, seconds=None):
         dev = self._get_device("stir")
@@ -103,11 +108,39 @@ class HardwareManager(QObject):
 
     def deliver_monomer(self, amount):
         dev = self._get_device("monomer")
-        if dev: dev.deliver(amount)
+        if dev: dev.deliver_monomer(amount)
 
     def retract_monomer(self, amount):
         dev = self._get_device("monomer")
-        if dev: dev.retract(amount)
+        if dev: dev.retract_monomer(amount)
+
+    def stop_monomer(self):
+        dev = self._get_device("monomer")
+        if dev: dev.stop_motor()
+
+    def home_monomer(self):
+        dev = self._get_device("monomer")
+        if dev: dev.home()
+
+    def test_monomer(self):
+        dev = self._get_device("monomer")
+        if dev: dev.test_motors()
+
+    def get_monomer_status(self):
+        dev = self._get_device("monomer")
+        if dev: dev.get_status()
+
+    def get_monomer_config(self):
+        dev = self._get_device("monomer")
+        if dev: dev.get_config()
+
+    def set_monomer_param(self, key: str, value: int):
+        dev = self._get_device("monomer")
+        if dev: dev.set_param(key, value)
+
+    def deliver_monomer_sequence(self):
+        dev = self._get_device("monomer")
+        if dev: dev.deliver_sequence()
 
     # === 内部辅助方法 ===
     def _get_device(self, prefix: str):
