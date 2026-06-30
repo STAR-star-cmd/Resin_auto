@@ -1,6 +1,6 @@
 from PyQt6.QtCore import QObject, pyqtSignal, QThread, QTimer
 from pymodbus.client import ModbusSerialClient
-
+import inspect
 
 class _TempWorker(QObject):
     """
@@ -27,6 +27,18 @@ class _TempWorker(QObject):
         self.pv_base_addr = 30
         self.sv_base_addr = 41
 
+        self._slave_kwarg = 'device_id' # 默认最新版
+        try:
+            sig = inspect.signature(self.client.read_holding_registers)
+            if 'device_id' in sig.parameters:
+                self._slave_kwarg = 'device_id'
+            elif 'unit' in sig.parameters:
+                self._slave_kwarg = 'unit'
+            elif 'slave' in sig.parameters:
+                self._slave_kwarg = 'slave'
+        except Exception:
+            pass # 如果检测失败，保持默认的 device_id
+
         # 自治定时器：运行在后台线程中
         self.timer = QTimer(self)
         self.timer.setInterval(poll_interval)
@@ -45,24 +57,48 @@ class _TempWorker(QObject):
             self.error_occurred.emit(f"温控模块({self.client.port})无法连接")
 
     def _poll(self):
-        """内部轮询逻辑 (仅保留读取 PV 的功能，不做多余扩展)"""
+        """内部轮询逻辑"""
+        # 使用初始化时动态检测到的正确参数名 (device_id / unit / slave)
+        kwargs = {self._slave_kwarg: self.slave_id}
+
         try:
-            result = self.client.read_holding_registers(
-                address=self.pv_base_addr, count=4, slave=self.slave_id
+            result_pv = self.client.read_holding_registers(
+                address=self.pv_base_addr, count=4, **kwargs
             )
-            if not result.isError():
-                self.data_updated.emit({"pv": result.registers})
+            result_sv = self.client.read_holding_registers(
+                address=self.sv_base_addr+1, count=4, **kwargs
+            )
+            result_out = self.client.read_coils(
+                address=240, count=4, **kwargs
+            )
+
+            data = {}
+            if not result_pv.isError():
+                data["pv"] = [reg / 10.0 for reg in result_pv.registers]
             else:
-                self.error_occurred.emit(f"读取PV失败: {result}")
+                self.error_occurred.emit(f"读取PV失败: {result_pv}")
+
+            if not result_sv.isError():
+                data["sv"] = [reg / 10.0 for reg in result_sv.registers]
+            else:
+                self.error_occurred.emit(f"读取SV失败: {result_sv}")
+
+            if not result_out.isError():
+                data["output_status"] = result_out.bits
+
+            if data:
+                self.data_updated.emit(data)
+
         except Exception as e:
             self.error_occurred.emit(f"轮询异常: {e}")
 
     def _execute_set_temp(self, channel, value):
         """执行写入指令 (通过事件队列与 _poll 串行执行，杜绝冲突)"""
+        kwargs = {self._slave_kwarg: self.slave_id}
         try:
             addr = self.sv_base_addr + channel
             result = self.client.write_register(
-                address=addr, value=value, slave=self.slave_id
+                address=addr, value=int(value * 10), **kwargs
             )
             if not result.isError():
                 self.command_executed.emit(True, f"CH{channel} 设置成功: {value}")
@@ -73,10 +109,11 @@ class _TempWorker(QObject):
 
     def _execute_set_switch(self, channel, state):
         """ 执行加热输出开关控制 """
+        kwargs = {self._slave_kwarg: self.slave_id}
         try:
             bit_addr = 255 + channel
             result = self.client.write_coil(
-                address=bit_addr, value=state, slave=self.slave_id
+                address=bit_addr, value=state, **kwargs
             )
             if not result.isError():
                 status = "ON" if state else "OFF"
@@ -104,7 +141,7 @@ class TemperatureDevice(QObject):
     error_occurred = pyqtSignal(str)
     command_executed = pyqtSignal(bool, str)
 
-    def __init__(self, port='COM3', slave_id=20, poll_interval=1000):
+    def __init__(self, port='COM14', slave_id=20, poll_interval=1000):
         super().__init__()
         self.port = port
 

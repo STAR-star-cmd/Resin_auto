@@ -22,7 +22,7 @@ def setup_hardware(manager: HardwareManager):
     # 🔧 请根据实际硬件连接的 COM 口号修改这里的 port 值
     # 如果某个设备暂时不用，可以直接注释掉对应的字典项
     hardware_config = {
-        # "temp": {"class": TemperatureDevice, "kwargs": {"port": "COM12"}},
+        "temp": {"class": TemperatureDevice, "kwargs": {"port": "COM14"}},
         # "weight_ch1": {"class": WeighingModule, "kwargs": {"port": "COM4"}},
         "weight_ch2": {"class": WeighingModule, "kwargs": {"port": "COM20"}},
         "stir": {"class": StirringModule, "kwargs": {"port": "COM17"}},

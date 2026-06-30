@@ -15,6 +15,7 @@ from ui.dialog import TemperatureDialog, SystemStatusDialog, SystemSettingsDialo
 class MainWindow(QMainWindow):
     # --- 发往 Manager 的请求信号 (意图) ---
     request_set_temp = pyqtSignal(int, float)
+    request_set_switch = pyqtSignal(int, bool)
     request_start_process = pyqtSignal()
     request_stop_process = pyqtSignal()
     request_tare = pyqtSignal(int)  # 建议：清零信号最好带上通道号，否则不知道清哪个
@@ -69,7 +70,7 @@ class MainWindow(QMainWindow):
         temp_layout.setHorizontalSpacing(15)
         temp_layout.setVerticalSpacing(10)
 
-        headers = ["Channel", "Real-time (°C)", "Set Temp (°C)", "Action"]
+        headers = ["Channel ", "Real-time (°C) ", "Set Temp (°C) ", "Heater Switch ", "Action "]
         for col, text in enumerate(headers):
             label = QLabel(f" {text}")
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -77,6 +78,7 @@ class MainWindow(QMainWindow):
 
         self.temp_realtime_labels = []
         self.temp_set_labels = []
+        self.heater_switch_buttons = []
 
         for i in range(1, 5):
             ch_label = QLabel(f"CH {i}")
@@ -88,13 +90,22 @@ class MainWindow(QMainWindow):
             btn = QPushButton("Modify")
             btn.clicked.connect(lambda _, ch=f"CH {i}": self.open_temp_dialog(ch))
 
+            btn_switch = QPushButton("OFF")
+            btn_switch.setCheckable(True)
+            btn_switch.setMinimumWidth(80)
+            btn_switch.setStyleSheet("background-color: #6c757d; color: white; font-weight: bold;")
+            # 使用 lambda 闭包传递通道索引 (i-1) 和按钮实例本身
+            btn_switch.clicked.connect(lambda _, ch=i - 1, b=btn_switch: self.toggle_heater_switch(ch, b))
+
             temp_layout.addWidget(ch_label, i, 0)
             temp_layout.addWidget(real_time, i, 1)
             temp_layout.addWidget(set_temp, i, 2)
             temp_layout.addWidget(btn, i, 3)
+            temp_layout.addWidget(btn_switch, i, 4)
 
             self.temp_realtime_labels.append(real_time)
             self.temp_set_labels.append(set_temp)
+            self.heater_switch_buttons.append(btn_switch)
 
         temp_group.setLayout(temp_layout)
 
@@ -197,6 +208,20 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(bottom_layout, stretch=2)
 
     # ================= 内部事件交互 =================
+    def toggle_heater_switch(self, channel_idx, button):
+        """处理加热开关按钮的点击事件"""
+        state = button.isChecked()
+        button.setText("ON" if state else "OFF")
+
+        # 动态改变按钮颜色以提供视觉反馈
+        if state:
+            button.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
+        else:
+            button.setStyleSheet("background-color: #dc3545; color: white; font-weight: bold;")
+
+        self.append_log(f"发送指令: {'开启' if state else '关闭'} CH{channel_idx + 1} 加热输出")
+        self.request_set_switch.emit(channel_idx, state)
+
     def open_temp_dialog(self, channel):
         dialog = TemperatureDialog(self, channel)
         if dialog.exec():
@@ -318,6 +343,29 @@ class MainWindow(QMainWindow):
             ch_key = f"CH{i + 1}"
             if ch_key in data:
                 self.temp_realtime_labels[i].setText(f"{data[ch_key]:.1f}")
+            elif "pv" in data and i < len(data["pv"]):
+                self.temp_realtime_labels[i].setText(f"{data['pv'][i]:.1f}")
+        if "sv" in data:
+            for i in range(4):
+                if i < len(data["sv"]):
+                    self.temp_set_labels[i].setText(f"{data['sv'][i]:.1f}")
+        if "output_status" in data:
+            for i in range(4):
+                if i < len(data["output_status"]):
+                    state = data["output_status"][i]
+                    btn = self.heater_switch_buttons[i]
+
+                    # 阻止信号触发，避免 UI 刷新时误发控制指令
+                    btn.blockSignals(True)
+                    btn.setChecked(state)
+                    btn.setText("ON" if state else "OFF")
+
+                    if state:
+                        btn.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")  # 绿色
+                    else:
+                        btn.setStyleSheet("background-color: #6c757d; color: white; font-weight: bold;")  # 灰色
+
+                    btn.blockSignals(False)
 
     @pyqtSlot(str, dict)
     def update_weight_display(self, channel: str, data: dict):
