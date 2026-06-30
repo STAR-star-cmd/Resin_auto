@@ -1,0 +1,395 @@
+import sys
+import re
+import serial
+import serial.tools.list_ports
+
+from PyQt5.QtWidgets import *
+from PyQt5.QtCore import *
+from PyQt5.QtGui import QIntValidator
+
+BAUD_RATE = 115200
+
+
+class SerialReceiver(QThread):
+    received = pyqtSignal(str)
+
+    def __init__(self, ser):
+        super().__init__()
+        self.ser = ser
+        self.running = True
+
+    def run(self):
+        while self.running:
+            try:
+                if self.ser and self.ser.in_waiting:
+                    msg = self.ser.readline().decode(
+                        errors="ignore"
+                    ).strip()
+
+                    if msg:
+                        self.received.emit(msg)
+
+            except:
+                pass
+
+            self.msleep(50)
+
+    def stop(self):
+        self.running = False
+
+
+class MainWindow(QWidget):
+
+    def __init__(self):
+        super().__init__()
+
+        self.ser = None
+
+        self.x = 0
+        self.y = 0
+        self.z = 200
+
+        self.init_ui()
+
+    def init_ui(self):
+
+        self.setWindowTitle("机械臂3位置标定程序")
+        self.resize(1000, 700)
+
+        layout = QVBoxLayout()
+
+        #################################################
+        # 串口
+        #################################################
+
+        row = QHBoxLayout()
+
+        self.port_box = QComboBox()
+
+        for p in serial.tools.list_ports.comports():
+            self.port_box.addItem(p.device)
+
+        self.btn_connect = QPushButton("连接")
+
+        row.addWidget(QLabel("串口"))
+        row.addWidget(self.port_box)
+        row.addWidget(self.btn_connect)
+
+        layout.addLayout(row)
+
+        #################################################
+        # 坐标显示
+        #################################################
+
+        self.label_xyz = QLabel(
+            f"X={self.x}   Y={self.y}   Z={self.z}"
+        )
+
+        layout.addWidget(self.label_xyz)
+
+        #################################################
+        # 步幅设置
+        #################################################
+
+        step_row = QHBoxLayout()
+
+        step_row.addWidget(QLabel("步幅(mm)："))
+
+        self.step_edit = QLineEdit("10")
+        self.step_edit.setValidator(
+            QIntValidator(1, 1000)
+        )
+        self.step_edit.setFixedWidth(80)
+
+        step_row.addWidget(self.step_edit)
+        step_row.addStretch()
+
+        layout.addLayout(step_row)
+
+        #################################################
+        # 方向按钮
+        #################################################
+
+        grid = QGridLayout()
+
+        self.btn_up = QPushButton("↑")
+        self.btn_down = QPushButton("↓")
+        self.btn_left = QPushButton("←")
+        self.btn_right = QPushButton("→")
+
+        self.btn_up.setMinimumHeight(50)
+        self.btn_down.setMinimumHeight(50)
+        self.btn_left.setMinimumHeight(50)
+        self.btn_right.setMinimumHeight(50)
+
+        grid.addWidget(self.btn_up, 0, 1)
+        grid.addWidget(self.btn_left, 1, 0)
+        grid.addWidget(self.btn_right, 1, 2)
+        grid.addWidget(self.btn_down, 2, 1)
+
+        layout.addLayout(grid)
+
+        #################################################
+        # Z轴
+        #################################################
+
+        row2 = QHBoxLayout()
+
+        self.btn_z_up = QPushButton("Z+")
+        self.btn_z_down = QPushButton("Z-")
+
+        self.btn_z_up.setMinimumHeight(50)
+        self.btn_z_down.setMinimumHeight(50)
+
+        row2.addWidget(self.btn_z_up)
+        row2.addWidget(self.btn_z_down)
+
+        layout.addLayout(row2)
+
+        #################################################
+        # 指令发送
+        #################################################
+
+        row3 = QHBoxLayout()
+
+        self.cmd_edit = QLineEdit()
+        self.btn_send = QPushButton("发送")
+
+        row3.addWidget(self.cmd_edit)
+        row3.addWidget(self.btn_send)
+
+        layout.addLayout(row3)
+
+        #################################################
+        # 日志
+        #################################################
+
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+
+        layout.addWidget(self.log)
+
+        self.setLayout(layout)
+
+        #################################################
+        # 信号
+        #################################################
+
+        self.btn_connect.clicked.connect(
+            self.connect_serial
+        )
+
+        self.btn_send.clicked.connect(
+            self.send_custom
+        )
+
+        self.btn_up.clicked.connect(
+            lambda: self.move(
+                0,
+                self.get_step(),
+                0
+            )
+        )
+
+        self.btn_down.clicked.connect(
+            lambda: self.move(
+                0,
+                -self.get_step(),
+                0
+            )
+        )
+
+        self.btn_left.clicked.connect(
+            lambda: self.move(
+                -self.get_step(),
+                0,
+                0
+            )
+        )
+
+        self.btn_right.clicked.connect(
+            lambda: self.move(
+                self.get_step(),
+                0,
+                0
+            )
+        )
+
+        self.btn_z_up.clicked.connect(
+            lambda: self.move(
+                0,
+                0,
+                self.get_step()
+            )
+        )
+
+        self.btn_z_down.clicked.connect(
+            lambda: self.move(
+                0,
+                0,
+                -self.get_step()
+            )
+        )
+
+    #################################################
+    # 获取步幅
+    #################################################
+
+    def get_step(self):
+        try:
+            step = int(self.step_edit.text())
+
+            if step <= 0:
+                return 10
+
+            return step
+
+        except:
+            return 10
+
+    #################################################
+    # 日志
+    #################################################
+
+    def add_log(self, msg):
+        self.log.append(msg)
+
+    #################################################
+    # 串口
+    #################################################
+
+    def connect_serial(self):
+
+        try:
+            port = self.port_box.currentText()
+
+            self.ser = serial.Serial(
+                port,
+                BAUD_RATE,
+                timeout=0.1
+            )
+
+            self.add_log(f"连接成功：{port}")
+
+            self.receiver = SerialReceiver(
+                self.ser
+            )
+
+            self.receiver.received.connect(
+                self.on_receive
+            )
+
+            self.receiver.start()
+
+        except Exception as e:
+            self.add_log(str(e))
+
+    #################################################
+    # 接收
+    #################################################
+
+    def on_receive(self, msg):
+        self.add_log("[RX] " + msg)
+
+    #################################################
+    # 更新坐标显示
+    #################################################
+
+    def update_xyz(self):
+        self.label_xyz.setText(
+            f"X={self.x}   Y={self.y}   Z={self.z}"
+        )
+
+    #################################################
+    # 发送
+    #################################################
+
+    def send_cmd(self, cmd):
+
+        if self.ser is None:
+            return
+
+        try:
+            self.ser.write(
+                (cmd + "\r\n").encode()
+            )
+
+            self.add_log("[TX] " + cmd)
+
+        except Exception as e:
+            self.add_log(str(e))
+
+    #################################################
+    # 运动
+    #################################################
+
+    def move(self, dx, dy, dz):
+
+        self.x += dx
+        self.y += dy
+        self.z += dz
+
+        self.update_xyz()
+
+        cmd = (
+            f"$HKM:{self.x},"
+            f"{self.y},"
+            f"{self.z},500!"
+        )
+
+        self.send_cmd(cmd)
+
+    #################################################
+    # 自定义发送
+    #################################################
+
+    def send_custom(self):
+
+        cmd = self.cmd_edit.text().strip()
+
+        if cmd == "":
+            return
+
+        self.send_cmd(cmd)
+
+        m = re.search(
+            r"\$HKM:([-\d]+),([-\d]+),([-\d]+)",
+            cmd
+        )
+
+        if m:
+            self.x = int(m.group(1))
+            self.y = int(m.group(2))
+            self.z = int(m.group(3))
+
+            self.update_xyz()
+
+    #################################################
+    # 退出
+    #################################################
+
+    def closeEvent(self, event):
+
+        try:
+            if self.ser:
+                self.send_cmd(
+                    "$DGT:0-1,1!"
+                )
+
+                self.receiver.stop()
+                self.ser.close()
+
+        except:
+            pass
+
+        event.accept()
+
+
+if __name__ == "__main__":
+
+    app = QApplication(sys.argv)
+
+    win = MainWindow()
+    win.show()
+
+    sys.exit(app.exec_())
