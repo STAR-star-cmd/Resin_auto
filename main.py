@@ -120,6 +120,14 @@ def main():
     if hasattr(window, 'request_status_powder'):
         window.request_status_powder.connect(hw_manager.status_powder)
 
+    # --- Module3 (Mixing) 控制请求 ---
+    if hasattr(window, 'request_trigger_ultrasonic'):
+        window.request_trigger_ultrasonic.connect(hw_manager.stir_u)
+    if hasattr(window, 'request_trigger_stir_x'):
+        window.request_trigger_stir_x.connect(hw_manager.stir_x)
+    if hasattr(window, 'request_trigger_stir_y'):
+        window.request_trigger_stir_y.connect(hw_manager.stir_y)
+
     # --- 4.2 Manager 数据/状态 -> UI 展示 ---
     if hasattr(window, 'update_temp_display'):
         hw_manager.temp_data.connect(window.update_temp_display)

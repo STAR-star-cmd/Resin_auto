@@ -506,3 +506,82 @@ class PowderControlDialog(QDialog):
         btn_close.setStyleSheet("background-color: #6c757d; margin-top: 10px;")
         btn_close.clicked.connect(self.accept)
         main_layout.addWidget(btn_close)
+
+
+# ================= 混匀模块(Module3)控制对话框 =================
+class MixingControlDialog(QDialog):
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Module3 - Mixing & Ultrasonic Control")
+        self.setMinimumWidth(450)
+
+        main_layout = QVBoxLayout(self)
+
+        # 1. 超声控制
+        ultra_group = QGroupBox("Ultrasonic (超声)")
+        ultra_layout = QFormLayout()
+        self.ultra_time_spin = QSpinBox()
+        self.ultra_time_spin.setRange(1, 999)
+        self.ultra_time_spin.setValue(5)
+        self.ultra_time_spin.setSuffix(" s")
+        self.btn_ultra_start = QPushButton("Start Ultrasonic")
+        self.btn_ultra_start.setStyleSheet("background-color: #17a2b8; color: white;")
+        self.btn_ultra_start.setMinimumHeight(35)
+        ultra_layout.addRow("Time:", self.ultra_time_spin)
+        ultra_layout.addRow(self.btn_ultra_start)
+        ultra_group.setLayout(ultra_layout)
+        main_layout.addWidget(ultra_group)
+
+        # 2. 磁力搅拌 1 (对应 X轴)
+        stir1_group = QGroupBox("Magnetic Stirrer 1 (X-axis)")
+        stir1_layout = QFormLayout()
+        self.stir1_speed_spin = QSpinBox()
+        self.stir1_speed_spin.setRange(-255, 255)
+        self.stir1_speed_spin.setValue(100)
+        self.stir1_time_spin = QSpinBox()
+        self.stir1_time_spin.setRange(1, 999)
+        self.stir1_time_spin.setValue(5)
+        self.stir1_time_spin.setSuffix(" s")
+        self.btn_stir1_start = QPushButton("Start Stirrer 1")
+        self.btn_stir1_start.setStyleSheet("background-color: #28a745; color: white;")
+        self.btn_stir1_start.setMinimumHeight(35)
+
+        stir1_layout.addRow("Speed (-255~255):", self.stir1_speed_spin)
+        stir1_layout.addRow("Time:", self.stir1_time_spin)
+        stir1_layout.addRow(self.btn_stir1_start)
+        stir1_group.setLayout(stir1_layout)
+        main_layout.addWidget(stir1_group)
+
+        # 3. 磁力搅拌 2 (对应 Y轴)
+        stir2_group = QGroupBox("Magnetic Stirrer 2 (Y-axis)")
+        stir2_layout = QFormLayout()
+        self.stir2_speed_spin = QSpinBox()
+        self.stir2_speed_spin.setRange(-255, 255)
+        self.stir2_speed_spin.setValue(100)
+        self.stir2_time_spin = QSpinBox()
+        self.stir2_time_spin.setRange(1, 999)
+        self.stir2_time_spin.setValue(5)
+        self.stir2_time_spin.setSuffix(" s")
+        self.btn_stir2_start = QPushButton("Start Stirrer 2")
+        self.btn_stir2_start.setStyleSheet("background-color: #28a745; color: white;")
+        self.btn_stir2_start.setMinimumHeight(35)
+
+        stir2_layout.addRow("Speed (-255~255):", self.stir2_speed_spin)
+        stir2_layout.addRow("Time:", self.stir2_time_spin)
+        stir2_layout.addRow(self.btn_stir2_start)
+        stir2_group.setLayout(stir2_layout)
+        main_layout.addWidget(stir2_group)
+
+        # 全局急停按钮
+        self.btn_stop_all = QPushButton("STOP ALL (急停)")
+        self.btn_stop_all.setMinimumHeight(45)
+        self.btn_stop_all.setStyleSheet("background-color: #dc3545; color: white; font-weight: bold; font-size: 16px;")
+        main_layout.addWidget(self.btn_stop_all)
+
+        # 底部关闭按钮
+        btn_close = QPushButton("Close")
+        btn_close.setMinimumHeight(40)
+        btn_close.setStyleSheet("background-color: #6c757d; margin-top: 10px;")
+        btn_close.clicked.connect(self.accept)
+        main_layout.addWidget(btn_close)

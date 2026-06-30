@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
 # 假设你的 dialog 文件路径正确
 from ui.dialog import TemperatureDialog, SystemStatusDialog, SystemSettingsDialog, DebugDialog, StartConfigDialog, \
-    MonomerControlDialog, PowderControlDialog
+    MonomerControlDialog, PowderControlDialog, MixingControlDialog
 
 
 class MainWindow(QMainWindow):
@@ -42,6 +42,11 @@ class MainWindow(QMainWindow):
     request_stop_powder = pyqtSignal()
     request_reset_powder = pyqtSignal()
     request_status_powder = pyqtSignal()
+
+    # MixingModule (Module3) 控制信号
+    request_trigger_ultrasonic = pyqtSignal(int)  # 参数: seconds
+    request_trigger_stir_x = pyqtSignal(int, int) # 参数: speed, seconds
+    request_trigger_stir_y = pyqtSignal(int, int) # 参数: speed, seconds
 
     def __init__(self):
         super().__init__()
@@ -274,9 +279,30 @@ class MainWindow(QMainWindow):
             powder_dialog.btn_status.clicked.connect(self.request_status_powder.emit)
             powder_dialog.exec()
 
+        def on_module3_clicked():
+            mixing_dialog = MixingControlDialog(self)
+            mixing_dialog.btn_ultra_start.clicked.connect(
+                lambda: self.request_trigger_ultrasonic.emit(mixing_dialog.ultra_time_spin.value()))
+            mixing_dialog.btn_stir1_start.clicked.connect(
+                lambda: self.request_trigger_stir_x.emit(mixing_dialog.stir1_speed_spin.value(),
+                    mixing_dialog.stir1_time_spin.value()))
+            mixing_dialog.btn_stir2_start.clicked.connect(
+                lambda: self.request_trigger_stir_y.emit(mixing_dialog.stir2_speed_spin.value(),
+                    mixing_dialog.stir2_time_spin.value()))
+
+            def stop_all_mixing():
+                self.request_trigger_stir_x.emit(0, 0)
+                self.request_trigger_stir_y.emit(0, 0)
+                self.request_trigger_ultrasonic.emit(0)
+                self.append_log("[Module3] 混匀模块急停触发！")
+
+            mixing_dialog.btn_stop_all.clicked.connect(stop_all_mixing)
+            mixing_dialog.exec()
+
         dialog.buttons[1].clicked.connect(on_module1_clicked)
         dialog.buttons[2].clicked.connect(on_module2_clicked)
-        for i, name in enumerate(["Module3", "Module4", "Module5"], start=1):
+        dialog.buttons[3].clicked.connect(on_module3_clicked)
+        for i, name in enumerate(["Module4", "Module5"], start=1):
             dialog.buttons[i].clicked.connect(lambda _, n=name: self.append_log(f"[Config] 进入 {n} 控制界面"))
         dialog.exec()
 
